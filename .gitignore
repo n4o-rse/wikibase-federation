@@ -1,0 +1,26 @@
+# Local credentials -- never commit
+config.ini
+
+# Import reports (generated)
+import_report_*.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# Editors / OS
+# Share the checked-in VS Code configs, ignore everything else.
+.vscode/*
+!.vscode/launch.json
+!.vscode/settings.json
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db

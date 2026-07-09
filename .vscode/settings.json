@@ -1,0 +1,7 @@
+{
+  // Run the script from the workspace root so config.ini / example.qs are found.
+  "python.terminal.executeInFileDir": false,
+  "python.analysis.typeCheckingMode": "basic",
+  "python.testing.pytestEnabled": true,
+  "python.testing.pytestArgs": ["tests"]
+}

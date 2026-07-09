@@ -1,0 +1,25 @@
+{
+  // Run/Debug configs. Use the Run and Debug panel (Ctrl+Shift+D) or F5.
+  // The plain "Run Python File" button needs no config: the script has defaults.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "QS import: dry-run (example.qs)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/import_qs_api.py",
+      "args": ["example.qs", "--dry-run", "--verbose"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "QS import: WRITE (uses config.ini dry_run setting)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/import_qs_api.py",
+      "args": ["${file}"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    }
+  ]
+}
