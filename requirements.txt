@@ -1,1 +1,6 @@
+# Runtime
 requests>=2.31.0
+
+# Development (tests + linting). Harmless to install globally alongside runtime.
+pytest>=8.0
+ruff>=0.6
