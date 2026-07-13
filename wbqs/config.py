@@ -4,8 +4,8 @@
 A "job" points at the QuickStatements file to import. It can be given as:
   * a CLI target (a .qs file or a test-case folder),
   * ``[job] qs_file``   -> an explicit .qs file,
-  * ``[job] testcase``  -> a folder holding the .qs file (reports go into
-    ``<folder>/report``), or
+  * ``[job] job_dir``   -> a folder holding the .qs file (reports go into
+    ``<folder>/report``; the old key ``testcase`` still works as an alias), or
   * the legacy ``[import] data_dir`` / ``input_file`` / ``report_dir`` settings.
 
 Relative paths in the config are resolved against the directory of config.ini,
@@ -124,12 +124,15 @@ def resolve_job(
             raise ConfigError(f"[job] qs_file not found: {p}")
         return p, p.parent / "report"
 
-    # 3) [job] testcase folder
-    testcase = config.get("job", "testcase", fallback="").strip()
-    if testcase:
-        d = _resolve_rel(testcase, base_dir)
+    # 3) [job] job_dir folder (alias: testcase, kept for backwards compat)
+    job_dir = (
+        config.get("job", "job_dir", fallback="").strip()
+        or config.get("job", "testcase", fallback="").strip()
+    )
+    if job_dir:
+        d = _resolve_rel(job_dir, base_dir)
         if not d.is_dir():
-            raise ConfigError(f"[job] testcase folder not found: {d}")
+            raise ConfigError(f"[job] job_dir folder not found: {d}")
         return _find_qs_in_dir(d), d / "report"
 
     # 4) Legacy [import] data_dir / input_file / report_dir
@@ -145,8 +148,8 @@ def resolve_job(
         return _find_qs_in_dir(data_dir), report_dir
 
     raise ConfigError(
-        "No job configured. Set [job] testcase (or qs_file) in config.ini, or pass "
-        "a .qs file / test-case folder on the command line."
+        "No job configured. Set [job] job_dir (or qs_file) in config.ini, or pass "
+        "a .qs file / job folder on the command line."
     )
 
 

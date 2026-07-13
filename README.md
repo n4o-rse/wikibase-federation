@@ -26,7 +26,7 @@ wikibase-federation/
 
 **Idea:** the code lives in the `wbqs/` package, the data in `testcases/`. A
 pointer in `config.ini` selects which test case is imported. To add a new case,
-create `testcases/my-case/input.qs` and set `testcase = testcases/my-case` in the
+create `testcases/my-case/input.qs` and set `job_dir = testcases/my-case` in the
 config.
 
 ## Why the API and not QuickStatements?
@@ -118,7 +118,7 @@ That's it — you are ready to run.
 ## Running
 
 1. Put your data in `testcases/example/input.qs` — or create a new folder
-   `testcases/<name>/input.qs` and point `testcase` at it in `config.ini`.
+   `testcases/<name>/input.qs` and point `job_dir` at it in `config.ini`.
 
 2. **Dry run** (writes nothing whilst `dry_run = true`):
 
@@ -145,12 +145,12 @@ the **currently open** `.qs` file (dry run, `--limit 1`).
 ```ini
 [wikibase]
 api_url    = https://federated-objects.de/w/api.php
-username   = Fthierygeo@importbot
+username   = YOUR_USERNAME@importbot
 password   = YOUR_BOT_PASSWORD
 user_agent = wikibase-qs-api-importer/1.1 (you@example.org)
 
 [job]
-testcase = testcases/example      ; folder holding the .qs file; reports -> <folder>/report
+job_dir = testcases/example      ; folder holding the .qs file; reports -> <folder>/report
 ; qs_file = testcases/example/input.qs   ; alternatively a single file (takes precedence)
 
 [import]
