@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from qs_parser import (
+from wbqs.parser import (
     WIKIDATA_ENTITY_PREFIX,
     ParseError,
     parse_property,

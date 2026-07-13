@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wikibase-qs-api-importer"
-version = "1.0.0"
-description = "Import QuickStatements-like item triples into a Wikibase via the API, including federated Wikidata item values."
+version = "1.1.0"
+description = "Import QuickStatements-like item triples into a Wikibase via the API, including federated Wikidata properties and item values."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
@@ -15,10 +15,11 @@ dependencies = ["requests>=2.31.0"]
 dev = ["pytest>=8.0", "ruff>=0.6"]
 
 [project.scripts]
-wb-qs-import = "import_qs_api:main"
+wb-qs-import = "main:main"
 
 [tool.setuptools]
-py-modules = ["import_qs_api", "qs_parser"]
+packages = ["wbqs"]
+py-modules = ["main"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

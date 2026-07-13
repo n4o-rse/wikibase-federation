@@ -1,180 +1,178 @@
 # Wikibase QuickStatements API Importer
 
-Kleiner, robuster Workaround, um QuickStatements-ähnliche **Item-Statements** per
+Kleines, robustes Tool, um QuickStatements-ähnliche **Item-Statements** per
 Wikibase-/MediaWiki-Action-API in eine Wikibase-Instanz zu schreiben – inklusive
-**föderierter Wikidata-Items** als Statement-Wert.
+**föderierter Wikidata-Properties und -Items**.
 
-- **Eingabedateien** (`*.qs`) liegen standardmäßig in **`/root/data`**.
-- **Reports** werden standardmäßig nach **`/root/report`** geschrieben.
-- Beide Pfade sind in `config.ini` überschreibbar (`data_dir`, `report_dir`).
+## Projektstruktur
+
+```
+wikibase-federation/
+├── main.py                 # Startpunkt (das hier ausführen)
+├── config.ini              # deine Konfiguration (gitignored) – aus config.example.ini
+├── config.example.ini      # Vorlage
+├── wbqs/                    # der Paketcode
+│   ├── parser.py           #   QS-Parsing (netzwerkfrei, getestet)
+│   ├── client.py           #   Wikibase-API-Client
+│   ├── config.py           #   Config + Job-/Testfall-Auflösung
+│   └── importer.py         #   Ablauf (Login, Schreiben, Report)
+├── testcases/              # je Testfall ein Ordner …
+│   └── example/
+│       ├── input.qs        #   die QS-Daten dieses Falls
+│       └── report/         #   Reports dieses Falls (wird angelegt, gitignored)
+└── tests/                  # Unit-Tests des Parsers
+```
+
+**Idee:** Der Code liegt im Paket `wbqs/`, die Daten in `testcases/`. Über einen
+Zeiger in `config.ini` wählst du, welcher Testfall gerade importiert wird. Für
+einen neuen Fall einfach `testcases/mein-fall/input.qs` anlegen und in der Config
+`testcase = testcases/mein-fall` setzen.
 
 ## Warum die API und nicht QuickStatements?
 
-Ziel ist die **Ontology-Federation- / „Federated-Values"**-Funktion von Wikibase:
-Ein Statement-Wert ist ein *Wikidata-Item*, referenziert über seine volle
-Entity-URI. Diese Funktion ist noch im Alpha-Stadium und ihre **API-Repräsentation
-föderierter Items ist noch nicht fertig** – deshalb kommt QuickStatements damit
-(noch) nicht zurecht, der direkte Aufruf `wbcreateclaim` mit der URI als `id`
-funktioniert dagegen:
+Ziel ist die **Ontology-Federation** von Wikibase. Zwei Spielarten:
+
+- **Federated Values** – lokale Property, *Wikidata-Item* als Wert.
+- **Federated Properties** – die *Property selbst* kommt von Wikidata.
+
+Die API-Repräsentation föderierter Entitäten ist noch Alpha, weshalb
+QuickStatements damit (noch) nicht umgeht. Der direkte Aufruf `wbcreateclaim`
+mit der vollen Entity-URI funktioniert dagegen – als Wert (`id`) und, für
+föderierte Properties, als `property`-Parameter:
 
 ```json
-{ "entity-type": "item", "id": "http://www.wikidata.org/entity/Q2016147" }
+{ "property": "http://www.wikidata.org/entity/P5572",
+  "value":    {"entity-type": "item", "id": "http://www.wikidata.org/entity/Q5"} }
 ```
-
-> Nicht mit den älteren „Federated **Properties**" verwechseln (dort kommen die
-> *Properties* von Wikidata). Beide Funktionen setzen die passende Konfiguration
-> und eine Allowlist auf der Zielinstanz voraus.
 
 ## Eingabeformat
 
-Spalten Tab- oder Whitespace-getrennt, 3 Spalten: `<Subjekt> <Property> <Wert>`.
+Drei Spalten (Tab- oder Whitespace-getrennt): `<Subjekt> <Property> <Wert>`.
 Leerzeilen und `#`-Zeilen werden ignoriert.
 
-- **Subjekt**: immer ein **lokales** Item (`Q…`) – das Item, das bearbeitet wird.
-- **Property**: **lokal** (`P…`) **oder föderiert** (`wd:P…` bzw. eine
-  Wikidata-Property-URI).
-- **Wert**: **lokales** Item (`Q…`) **oder föderiertes** Wikidata-Item (`wd:Q…`
-  bzw. eine Wikidata-Entity-URI).
+- **Subjekt**: immer ein **lokales** Item (`Q…`).
+- **Property**: lokal (`P…`) **oder** föderiert (`wd:P…` bzw. Wikidata-URI).
+- **Wert**: lokales Item (`Q…`) **oder** föderiert (`wd:Q…` bzw. Wikidata-URI).
 
-Damit sind alle **vier Kombinationen** möglich:
+Alle vier Kombinationen sind möglich:
 
 ```text
-Q3  P1        Q4        # lokale Property   + lokaler Item-Wert
-Q3  P1        wd:Q5     # lokale Property   + föderierter Wikidata-Item-Wert
+Q3  P1        Q4        # lokale Property    + lokaler Item-Wert
+Q3  P1        wd:Q5     # lokale Property    + föderierter Item-Wert
 Q3  wd:P5572  Q4        # föderierte Property + lokaler Item-Wert
 Q3  wd:P5572  wd:Q5     # föderierte Property + föderierter Item-Wert
 ```
 
-Föderierte Properties/Items werden intern zur Entity-URI normalisiert
-(`http://www.wikidata.org/entity/P…` bzw. `…/Q…`) und in genau dieser Form an
-`wbcreateclaim` übergeben – so, wie es auch in der EntityData-Ausgabe der
-Instanz erscheint. Akzeptiert werden für Properties `wd:P…`, `wdt:P…`, die
-`…/entity/P…`- und die `…/prop/direct/P…`-URI.
+Föderierte Referenzen werden zur Entity-URI normalisiert
+(`http://www.wikidata.org/entity/…`). Für Properties werden `wd:P…`, `wdt:P…`,
+`…/entity/P…` und `…/prop/direct/P…` akzeptiert.
 
-**Bewusst nicht** enthalten: Strings, Datums-/Mengenangaben, Koordinaten,
-Qualifier, References, Labels, Descriptions, Aliases. Fokus liegt auf
-`wikibase-item`. Erweiterbar über `qs_parser.parse_property` / `parse_value`.
+**Nicht** enthalten: Strings, Datums-/Mengenangaben, Koordinaten, Qualifier,
+References, Labels, Descriptions, Aliases. Fokus: `wikibase-item`.
 
 ## Voraussetzungen
 
 - Python 3.9+ und Git.
-- Ziel-Wikibase mit aktivierter Ontology-Federation und einer Property vom
-  Datentyp `wikibase-item`, die föderierte Werte erlaubt (im Beispiel `P1`).
-- Ein **Bot-Passwort** (`Special:BotPasswords`) mit Bearbeitungsrecht. Der
-  Benutzername lautet dann `Hauptkonto@botname`.
+- Ziel-Wikibase mit aktivierter Ontology-Federation; für föderierte Werte eine
+  `wikibase-item`-Property, die föderierte Werte erlaubt; für föderierte
+  Properties muss Property Federation aktiv sein.
+- Ein **Bot-Passwort** (`Special:BotPasswords`); Benutzer = `Hauptkonto@botname`.
 
-## Schnellstart (Linux)
+## Schnellstart
 
 ```bash
-git clone <DEIN_REPO_URL> wikibase_qs_api_importer
-cd wikibase_qs_api_importer
-
-# 1) Virtuelle Umgebung + Abhängigkeiten
-python3 -m venv .venv
+python -m venv .venv
+# Linux/macOS:
 source .venv/bin/activate
+# Windows (PowerShell):
+# .\.venv\Scripts\Activate.ps1
+
 pip install -r requirements.txt
-
-# 2) Verzeichnisse für Ein-/Ausgabe (report_dir wird sonst automatisch angelegt)
-mkdir -p /root/data /root/report
-
-# 3) Config anlegen und ausfüllen
-cp config.example.ini config.ini
-nano config.ini        # api_url, username (Konto@bot), password, user_agent
-
-# 4) Eine .qs-Datei in /root/data ablegen (z. B. das Beispiel zum Testen)
-cp example.qs /root/data/import.qs
-
-# 5) Trockenlauf (schreibt nichts, solange dry_run = true)
-python import_qs_api.py
-
-# 6) Scharfschalten: in config.ini dry_run = false setzen, dann erneut:
-python import_qs_api.py
+cp config.example.ini config.ini      # Windows: copy config.example.ini config.ini
+# config.ini ausfüllen: api_url, username (Konto@bot), password, user_agent
 ```
 
-Nach jedem echten Lauf liegt ein Bericht als
-`/root/report/import_report_<zeitstempel>.json`.
+Testfall vorbereiten und importieren:
+
+1. QS-Daten in `testcases/example/input.qs` legen (oder einen neuen Ordner
+   `testcases/<name>/input.qs` anlegen und in `config.ini` `testcase` darauf zeigen).
+2. **Trockenlauf** (schreibt nichts, solange `dry_run = true`):
+
+   ```bash
+   python main.py
+   ```
+
+3. **Scharfschalten**: in `config.ini` `dry_run = false`, dann erneut `python main.py`.
+
+Reports landen als `testcases/<name>/report/import_report_<zeitstempel>.json`.
+
+### In VS Code
+
+`main.py` läuft **ohne Argumente** – also per Play-Button oben rechts oder
+Rechtsklick → **„Run Python File in Terminal"**. Der Job kommt aus `config.ini`.
+Fehlt `config.ini`, wird `config.example.ini` genutzt und ein **erzwungener
+Dry-Run** gefahren. Über **Run and Debug** (F5) gibt es drei Starts: Dry-Run des
+Config-Jobs, echter Lauf des Config-Jobs, und ein Lauf der **gerade offenen**
+`.qs`-Datei (Dry-Run, `--limit 1`).
 
 ## Config-Referenz (`config.ini`)
 
 ```ini
 [wikibase]
 api_url    = https://federated-objects.de/w/api.php
-username   = Fthierygeo@importbot      ; Bot-Benutzer: Hauptkonto@botname
+username   = Fthierygeo@importbot
 password   = DEIN_BOT_PASSWORT
-user_agent = wikibase-qs-api-importer/1.0 (du@example.org)
+user_agent = wikibase-qs-api-importer/1.1 (du@example.org)
+
+[job]
+testcase = testcases/example      ; Ordner mit der .qs-Datei; Reports -> <ordner>/report
+; qs_file = testcases/example/input.qs   ; alternativ direkt eine Datei (hat Vorrang)
 
 [import]
-data_dir         = /root/data          ; Ordner mit den .qs-Eingabedateien
-report_dir       = /root/report        ; Ordner für die JSON-Reports
-input_file       = import.qs           ; Datei in data_dir; leer = automatisch wählen
-dry_run          = true                ; true = nur anzeigen, nichts schreiben
-skip_existing    = true                ; vorhandene identische Statements überspringen
-maxlag           = 0                   ; >0 nur bei repliziertem/geteiltem Backend nötig
-mark_bot         = false               ; Edits mit Bot-Flag markieren (Bot-Recht nötig)
-throttle_seconds = 0.0                 ; Pause zwischen Schreibvorgängen
+dry_run          = true
+skip_existing    = true
+maxlag           = 0
+mark_bot         = false
+throttle_seconds = 0.0
 ```
 
-Wie die Eingabedatei ohne CLI-Argument gefunden wird:
-
-1. `[import] input_file` (in `data_dir`, sonst absoluter Pfad), sonst
-2. die **einzige** `*.qs`-Datei in `data_dir` (bei mehreren: Fehlermeldung mit
-   Auswahl), sonst
-3. das mitgelieferte `example.qs` als Erst-Start-Fallback.
-
-Zugangsdaten lassen sich alternativ per Umgebungsvariable setzen (haben Vorrang
-vor der Datei, umgehen die INI-`%`-Interpolation):
-
-```bash
-export WIKIBASE_USERNAME="Fthierygeo@importbot"
-export WIKIBASE_PASSWORD='dein"passwort'   # einfache Quotes: Sonderzeichen bleiben
-```
+Relative Pfade werden **relativ zur `config.ini`** aufgelöst (funktioniert also
+unabhängig vom Arbeitsverzeichnis). Zugangsdaten können auch per Umgebungsvariable
+kommen (`WIKIBASE_USERNAME`, `WIKIBASE_PASSWORD`; haben Vorrang, umgehen die
+INI-`%`-Interpolation).
 
 ## Nutzung mit Argumenten
 
 ```bash
-python import_qs_api.py /root/data/import.qs         # bestimmte Datei
-python import_qs_api.py --dry-run                    # nie schreiben
-python import_qs_api.py --limit 1                    # nur erste Zeile (guter erster Test)
-python import_qs_api.py --federate-bare-qids         # bare Q-IDs als Wikidata behandeln
-python import_qs_api.py --no-skip-existing           # Duplikatprüfung aus
-python import_qs_api.py --verbose                    # DEBUG-Ausgabe
+python main.py testcases/example              # Testfall-Ordner explizit
+python main.py testcases/example/input.qs     # bestimmte Datei
+python main.py --dry-run                       # nie schreiben
+python main.py --limit 1                       # nur erste Zeile (guter erster Test)
+python main.py --federate-bare-qids            # bare Q-IDs als Wikidata-Items
+python main.py --federate-bare-pids            # bare P-IDs als Wikidata-Properties
+python main.py --no-skip-existing --verbose
 ```
-
-## Windows / VS Code
-
-Unter Windows die Pfade in `config.ini` anpassen, z. B. `data_dir = data` und
-`report_dir = report` (relativ zum Projekt), Umgebung so aktivieren:
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-copy config.example.ini config.ini
-```
-
-Das Skript läuft auch **ohne Argumente** und lässt sich damit per Play-Button
-oben rechts oder Rechtsklick → **„Run Python File in Terminal"** starten. Fehlt
-`config.ini`, wird `config.example.ini` genutzt und ein **erzwungener Dry-Run**
-gefahren, sodass ein erster Klick sofort etwas Sinnvolles zeigt. Über
-**Run and Debug** (F5) gibt es zwei vorkonfigurierte Starts (`.vscode/launch.json`):
-ein reiner Dry-Run und ein Lauf mit der gerade geöffneten `.qs`-Datei.
 
 ## Verhalten & Sicherheitsnetze
 
-- **Duplikatprüfung** (`skip_existing`): identische Property + identischer
-  Item-Wert werden übersprungen.
+- **Duplikatprüfung** (`skip_existing`): identische Property + identischer Wert
+  werden übersprungen.
 - **User-Agent**, **`assert=user`**, optionales **`maxlag`**,
-  **`badtoken`-Erneuerung**, **GET-Retries** und **Throttling** sind eingebaut.
-- **Bericht** pro Lauf: `report_dir/import_report_<zeitstempel>.json`.
+  **`badtoken`-Erneuerung**, **GET-Retries**, **Throttling**.
+- **Report** je Lauf im `report/` des Testfalls.
 - **Exit-Codes**: `0` = Erfolg, `1` = mind. ein Schreibfehler, `2` =
   Parsing-/Konfigurationsfehler.
+
+Zwei Annahmen bei föderierten Properties (falls die Instanz abweicht, siehst du
+es als klaren API-Fehler bzw. als nicht erkanntes Duplikat): der `property`-
+Parameter erhält die Entity-URI, und `skip_existing` setzt voraus, dass
+`wbgetentities` den Claim unter demselben URI-Schlüssel zurückgibt.
 
 ## Sicherheit
 
 - `config.ini` niemals committen (steht in `.gitignore`).
-- Bevorzugt **Bot-Passwörter** statt des Hauptkonto-Passworts (echte
-  Bot-Passwörter bestehen nur aus Buchstaben/Ziffern, keine Sonderzeichen).
-- **Jedes Passwort, das je in einem Chat oder Skript sichtbar war, widerrufen.**
+- Bevorzugt **Bot-Passwörter** (bestehen nur aus Buchstaben/Ziffern).
+- **Jedes je in einem Chat/Skript sichtbare Passwort widerrufen.**
 
 ## Entwicklung
 
@@ -184,8 +182,12 @@ pytest -q
 ruff check .
 ```
 
-Die netzwerkfreie Parsing-Logik liegt in `qs_parser.py` (Tests in
-`tests/test_qs_parser.py`). CI: `.github/workflows/ci.yml`.
+Optionaler Editable-Install stellt den Befehl `wb-qs-import` bereit:
+
+```bash
+pip install -e .
+wb-qs-import --dry-run
+```
 
 ## Lizenz
 
