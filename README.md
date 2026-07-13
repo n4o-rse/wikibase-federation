@@ -27,18 +27,33 @@ funktioniert dagegen:
 
 ## Eingabeformat
 
-Spalten Tab- oder Whitespace-getrennt, 3 Spalten. Leerzeilen und `#`-Zeilen
-werden ignoriert.
+Spalten Tab- oder Whitespace-getrennt, 3 Spalten: `<Subjekt> <Property> <Wert>`.
+Leerzeilen und `#`-Zeilen werden ignoriert.
+
+- **Subjekt**: immer ein **lokales** Item (`Q…`) – das Item, das bearbeitet wird.
+- **Property**: **lokal** (`P…`) **oder föderiert** (`wd:P…` bzw. eine
+  Wikidata-Property-URI).
+- **Wert**: **lokales** Item (`Q…`) **oder föderiertes** Wikidata-Item (`wd:Q…`
+  bzw. eine Wikidata-Entity-URI).
+
+Damit sind alle **vier Kombinationen** möglich:
 
 ```text
-Q3  P1  Q4                                      # lokales Item -> lokales Item
-Q3  P1  http://www.wikidata.org/entity/Q2016147 # lokales Item -> föderiertes Wikidata-Item
-Q3  P1  wd:Q2016147                             # dito, Kurzschreibweise
+Q3  P1        Q4        # lokale Property   + lokaler Item-Wert
+Q3  P1        wd:Q5     # lokale Property   + föderierter Wikidata-Item-Wert
+Q3  wd:P5572  Q4        # föderierte Property + lokaler Item-Wert
+Q3  wd:P5572  wd:Q5     # föderierte Property + föderierter Item-Wert
 ```
+
+Föderierte Properties/Items werden intern zur Entity-URI normalisiert
+(`http://www.wikidata.org/entity/P…` bzw. `…/Q…`) und in genau dieser Form an
+`wbcreateclaim` übergeben – so, wie es auch in der EntityData-Ausgabe der
+Instanz erscheint. Akzeptiert werden für Properties `wd:P…`, `wdt:P…`, die
+`…/entity/P…`- und die `…/prop/direct/P…`-URI.
 
 **Bewusst nicht** enthalten: Strings, Datums-/Mengenangaben, Koordinaten,
 Qualifier, References, Labels, Descriptions, Aliases. Fokus liegt auf
-`wikibase-item`. Erweiterbar über `qs_parser.parse_value`.
+`wikibase-item`. Erweiterbar über `qs_parser.parse_property` / `parse_value`.
 
 ## Voraussetzungen
 

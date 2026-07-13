@@ -476,9 +476,10 @@ def main(argv: list[str] | None = None) -> int:
 
     log.info("Parsed %d statement(s).", len(statements))
     for st in statements:
-        kind = "federated" if st.is_federated else "local"
-        log.info("  L%d: %s %s -> %s (%s)", st.line_no, st.entity, st.prop,
-                 json.dumps(st.value_api, ensure_ascii=False), kind)
+        prop_kind = "fed-prop" if st.is_federated_property else "local-prop"
+        val_kind = "fed-val" if st.is_federated_value else "local-val"
+        log.info("  L%d: %s | %s | %s  [%s, %s]", st.line_no, st.entity, st.prop,
+                 json.dumps(st.value_api, ensure_ascii=False), prop_kind, val_kind)
 
     if not statements:
         log.info("Nothing to import.")
