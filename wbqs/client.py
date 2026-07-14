@@ -118,9 +118,17 @@ class WikibaseClient:
 
     def _get(self, params: dict[str, Any], *, check: bool = True) -> dict[str, Any]:
         params = {"format": "json", **params}
-        r = self.session.get(self.api_url, params=params, timeout=self.timeout)
-        r.raise_for_status()
-        result = r.json()
+        for attempt in range(1, 5):
+            r = self.session.get(self.api_url, params=params, timeout=self.timeout)
+            r.raise_for_status()
+            result = r.json()
+            code = result.get("error", {}).get("code", "")
+            if (code.startswith("internal_api_error") or code == "maxlag") and attempt < 4:
+                wait = 2.0 * attempt
+                log.warning("Transient error on GET (%s); waiting %ss before retry.", code, wait)
+                time.sleep(wait)
+                continue
+            return self._check(result) if check else result
         return self._check(result) if check else result
 
     def _post(self, data: dict[str, Any], *, check: bool = True) -> dict[str, Any]:

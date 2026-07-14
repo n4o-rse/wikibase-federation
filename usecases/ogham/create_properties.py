@@ -81,11 +81,49 @@ def _ensure_formatter(client: WikibaseClient, prop_pid: str, formatter_pid: str,
     return "added"
 
 
+def _ensure_equiv(client: WikibaseClient, prop_pid: str, equiv_pid: str, value: str) -> str:
+    """Set 'equivalent Wikidata property = <value>' on a property, if not present."""
+    try:
+        entity = client.get_entity(prop_pid)
+    except ApiError:
+        return "not readable"
+    for claim in entity.get("claims", {}).get(equiv_pid, []):
+        if claim.get("mainsnak", {}).get("datavalue", {}).get("value") == value:
+            return "exists"
+    st = Statement(entity=prop_pid, prop=equiv_pid, prop_raw=equiv_pid,
+                   value_raw=value, value_api=value, line_no=0, original="", value_datatype="string")
+    client.create_claim(st)
+    return "added"
+
+
+def _create_or_reuse(client: WikibaseClient, p: dict) -> str:
+    """Create a property, or reuse an existing one on a label conflict."""
+    try:
+        result = client.create_entity(
+            new="property",
+            labels={"en": p["label"]},
+            descriptions={"en": p.get("description", "")},
+            datatype=p["datatype"],
+        )
+        pid = result.get("entity", {}).get("id")
+        print(f"  created {p['key']} -> {pid}")
+        return pid
+    except ApiError as exc:
+        if "label-conflict" in (exc.detail or "") or "label-conflict" in str(exc):
+            pid = client.find_property_by_label(p["label"])
+            if pid:
+                print(f"  reused existing {p['key']} -> {pid} (label conflict)")
+                return pid
+        raise
+
+
 def ensure_properties(*, dry_run: bool = False) -> dict[str, str]:
-    """Create missing local properties and set formatter URLs. Returns key->PID."""
+    """Create missing local properties, set formatter URLs and equivalence maps."""
     state = _load_state()
-    to_create = [p for p in model.LOCAL_PROPERTIES if p["key"] not in state]
+    all_props = [model.EQUIV_PROPERTY, *model.LOCAL_PROPERTIES]
+    to_create = [p for p in all_props if p["key"] not in state]
     with_formatter = [p for p in model.LOCAL_PROPERTIES if p.get("formatter")]
+    with_equiv = [p for p in model.LOCAL_PROPERTIES if p.get("wd_equiv")]
 
     if to_create:
         print("Local properties to create:")
@@ -94,10 +132,12 @@ def ensure_properties(*, dry_run: bool = False) -> dict[str, str]:
     else:
         print("All local properties already exist.")
     if with_formatter:
-        print("Formatter URLs to ensure on: " + ", ".join(p["key"] for p in with_formatter))
+        print("Formatter URLs on: " + ", ".join(p["key"] for p in with_formatter))
+    if with_equiv:
+        print("Equivalence mappings on: " + ", ".join(p["key"] for p in with_equiv))
 
     if dry_run:
-        print("Dry run: no properties created, no formatters set.")
+        print("Dry run: nothing created, no formatters/mappings set.")
         return state
 
     api_url, username, password, ua = _load_wikibase_config()
@@ -106,17 +146,10 @@ def ensure_properties(*, dry_run: bool = False) -> dict[str, str]:
     client.login()
 
     for p in to_create:
-        result = client.create_entity(
-            new="property",
-            labels={"en": p["label"]},
-            descriptions={"en": p.get("description", "")},
-            datatype=p["datatype"],
-        )
-        pid = result.get("entity", {}).get("id")
+        pid = _create_or_reuse(client, p)
         if not pid:
-            raise SystemExit(f"No id returned for {p['key']}: {result}")
+            raise SystemExit(f"No id for {p['key']}")
         state[p["key"]] = pid
-        print(f"  created {p['key']} -> {pid}")
         _save_state(state)
 
     formatter_pid = state.get("formatter_url")
@@ -124,10 +157,16 @@ def ensure_properties(*, dry_run: bool = False) -> dict[str, str]:
         for p in with_formatter:
             pid = state.get(p["key"])
             if pid:
-                status = _ensure_formatter(client, pid, formatter_pid, p["formatter"])
-                print(f"  formatter {p['key']} ({pid}): {status}")
-    else:
-        print("WARNING: no 'formatter_url' property PID; skipped formatter URLs.")
+                print(f"  formatter {p['key']} ({pid}): "
+                      f"{_ensure_formatter(client, pid, formatter_pid, p['formatter'])}")
+
+    equiv_pid = state.get(model.EQUIV_PROPERTY["key"])
+    if equiv_pid:
+        for p in with_equiv:
+            pid = state.get(p["key"])
+            if pid:
+                print(f"  equiv {p['key']} ({pid}) = {p['wd_equiv']}: "
+                      f"{_ensure_equiv(client, pid, equiv_pid, p['wd_equiv'])}")
 
     print(f"properties.json: {state}")
     return state

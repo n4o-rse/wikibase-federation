@@ -16,10 +16,23 @@ from dataclasses import dataclass, field
 WD = "http://www.wikidata.org/entity/"
 
 # The local hub item that receives the statements.
-# NOTE: Q3 is the existing stub ("Ogham Stone UCC Stone Corridor IV"). It still
-# carries leftover test statements from earlier runs; consider cleaning those
-# (wbremoveclaims) or pointing this at a fresh item before the final demo.
 HUB_ITEM = "Q5"
+
+# How the 7 predicates that have a Wikidata property are written:
+#   "federated"       -> only wd:P...        (needs Federated Properties; original)
+#   "local"           -> only local property (works on any Wikibase)
+#   "local+federated" -> both, side by side  (the comparison)
+# The cross-Wikibase links (#9-16) are always local (no Wikidata equivalent).
+PROPERTY_MODE = "local+federated"
+
+# Local string property recording each local property's Wikidata equivalent
+# (string, because equivalent property (P1628) is url datatype and url is blocked).
+EQUIV_PROPERTY = {
+    "key": "equiv_wikidata_property",
+    "label": "equivalent Wikidata property",
+    "datatype": "string",
+    "description": "the Wikidata property this local property is equivalent to (e.g. P31)",
+}
 
 # Item terms (set via wbeditentity, not as statements).
 TERMS = {
@@ -28,11 +41,33 @@ TERMS = {
     "descriptions": {"en": "Ogham stone (CIIC 81 / UCC 4), UCC Stone Corridor, Cork"},
 }
 
-# Local properties to create (datatype is fixed; PIDs are assigned on creation).
-# Plan B: cross-Wikibase links use external-id + a per-source formatter URL
-# (string datatype), sidestepping the instance-wide url-datatype block. The
-# 'formatter' string is set on each ID property via the 'formatter_url' property.
+# Local properties to create. Two groups:
+#  (a) local equivalents of the Wikidata predicates (wd_equiv/wd_datatype set);
+#  (b) the Plan-B cross-Wikibase links (external-id + formatter URL).
 LOCAL_PROPERTIES = [
+    # (a) local equivalents of the federated Wikidata predicates
+    {"key": "instance_of", "label": "instance of", "datatype": "wikibase-item",
+     "wd_equiv": "P31", "wd_datatype": "wikibase-item",
+     "description": "type to which this object belongs"},
+    {"key": "writing_system", "label": "writing system", "datatype": "wikibase-item",
+     "wd_equiv": "P282", "wd_datatype": "wikibase-item",
+     "description": "writing system used for the inscription"},
+    {"key": "location_of_discovery", "label": "location of discovery", "datatype": "wikibase-item",
+     "wd_equiv": "P189", "wd_datatype": "wikibase-item",
+     "description": "place where the object was found"},
+    {"key": "location", "label": "location", "datatype": "wikibase-item",
+     "wd_equiv": "P276", "wd_datatype": "wikibase-item",
+     "description": "current physical location of the object"},
+    {"key": "collection", "label": "collection", "datatype": "wikibase-item",
+     "wd_equiv": "P195", "wd_datatype": "wikibase-item",
+     "description": "holding institution / collection"},
+    {"key": "coordinate_location", "label": "coordinate location", "datatype": "globe-coordinate",
+     "wd_equiv": "P625", "wd_datatype": "globe-coordinate",
+     "description": "geographic coordinates of the object"},
+    {"key": "inscription", "label": "inscription", "datatype": "monolingualtext",
+     "wd_equiv": "P1684", "wd_datatype": "monolingualtext",
+     "description": "text of the inscription"},
+    # (b) Plan-B cross-Wikibase links: external-id + per-source formatter URL
     {
         "key": "formatter_url",
         "label": "formatter URL",

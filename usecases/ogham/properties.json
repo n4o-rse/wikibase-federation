@@ -8,5 +8,13 @@
   "fuzzysl_id": "P11",
   "linkedogham_id": "P12",
   "semantickompakkt_id": "P13",
-  "squirrelbase_id": "P14"
+  "squirrelbase_id": "P14",
+  "equiv_wikidata_property": "P15",
+  "instance_of": "P1",
+  "writing_system": "P32",
+  "location_of_discovery": "P33",
+  "location": "P34",
+  "collection": "P35",
+  "coordinate_location": "P36",
+  "inscription": "P37"
 }
