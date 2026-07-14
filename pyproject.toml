@@ -31,3 +31,7 @@ target-version = "py39"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# Use-case scripts bootstrap sys.path before importing model / wbqs.
+"usecases/**/*.py" = ["E402", "I001"]

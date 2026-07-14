@@ -14,20 +14,20 @@ wikibase-federation/
 ├── requirements.txt        # all dependencies (runtime + dev tools)
 ├── wbqs/                    # the package code
 │   ├── parser.py           #   QS parsing (network-free, unit-tested)
-│   ├── client.py           #   Wikibase API client
-│   ├── config.py           #   config + job / test-case resolution
+│   ├── client.py           #   Wikibase API client (retries, entity/property creation)
+│   ├── config.py           #   config + job resolution
 │   └── importer.py         #   workflow (login, write, report)
-├── testcases/              # one folder per test case …
-│   └── example/
-│       ├── input.qs        #   the QS data for that case
-│       └── report/         #   reports for that case (created on demand, git-ignored)
+├── usecases/               # one folder per use case (data + build scripts)
+│   ├── ogham/              #   Ogham stone across several Wikibases
+│   └── software/           #   research software with a CodeMeta crosswalk
 └── tests/                  # parser unit tests
 ```
 
-**Idea:** the code lives in the `wbqs/` package, the data in `testcases/`. A
-pointer in `config.ini` selects which test case is imported. To add a new case,
-create `testcases/my-case/input.qs` and set `job_dir = testcases/my-case` in the
-config.
+**Idea:** the reusable code lives in `wbqs/`, each use case in `usecases/<name>/`.
+A pointer in `config.ini` (`job_dir = usecases/<name>`) selects the active one.
+A use case is driven by a frozen `model.py` (the single source of truth) and a
+small `pipeline.py` that creates items/properties, generates `input.qs`, and
+imports — all in one `python main.py` (see *Use cases & pipeline* below).
 
 ## Why the API and not QuickStatements?
 
@@ -45,6 +45,42 @@ properties, as the `property` parameter:
 { "property": "http://www.wikidata.org/entity/P5572",
   "value":    {"entity-type": "item", "id": "http://www.wikidata.org/entity/Q5"} }
 ```
+
+## Use cases & pipeline
+
+Beyond plain `.qs` import, a use case can drive the whole flow from a frozen
+`model.py`. With `[run] pipeline = true` (or `--pipeline`), `main.py` delegates to
+the job folder's `pipeline.py`, which runs in order:
+
+1. **ensure item(s)** — create the subject item(s) once (idempotent, recorded in
+   `hub_item.json` / `items.json`);
+2. **ensure properties** — create the local properties once (idempotent,
+   recorded in `properties.json`), set formatter URLs / equivalence mappings, and
+   reuse existing properties on a label conflict;
+3. **build `input.qs`** — regenerate it from `model.py`;
+4. **import** — write the statements (and, for Ogham, apply references).
+
+Everything is idempotent and dry-run-safe: re-running skips what already exists.
+
+Two use cases ship as worked examples:
+
+- **`usecases/ogham/`** — one Ogham stone (CIIC 81) as a *hub* item linking to the
+  same object in several other Wikibases (FactGrid, Fuzzy-SL, Semantic Kompakkt,
+  SquirrelBase, LinkedOgham) plus native Wikidata values. Demonstrates
+  *statements about an entity that lives in another Wikibase*.
+- **`usecases/software/`** — two research-software items modelled with a
+  **CodeMeta ↔ Wikidata crosswalk**: reuse Wikidata's ontology where it fits, add
+  local properties for the CodeMeta-specific fields it lacks. Demonstrates
+  *reference-source / ontology reuse plus a domain extension*.
+
+Two switches in each `model.py`:
+
+- `PROPERTY_MODE` — `"federated"` (predicate = `wd:P…`), `"local"` (a local
+  property, works without the Federated Properties feature), or `"local+federated"`
+  (both, side by side, for the comparison). Local equivalents record their
+  Wikidata property via a string `equivalent Wikidata property`.
+- `USE_FEDERATED_VALUES` — item values as federated `wd:Q…` (default) or as
+  external-id "Wikidata ID" literals (fully federation-free).
 
 ## Input format
 
@@ -68,8 +104,18 @@ Federated references are normalised to the entity URI
 (`http://www.wikidata.org/entity/…`). For properties, `wd:P…`, `wdt:P…`,
 `…/entity/P…` and `…/prop/direct/P…` are all accepted.
 
-**Not** supported: strings, dates, quantities, coordinates, qualifiers,
-references, labels, descriptions, aliases. The focus is `wikibase-item`.
+An optional **4th column** carries a datatype hint for non-item values:
+
+```text
+Q5  wd:P2888  https://database.factgrid.de/entity/Q1000294   url
+Q5  P6        gares_1                                         external-id
+Q5  wd:P625   51.893659,-8.492443                            coordinate
+Q5  wd:P1684  CASSITTAS MAQI MUCOI CALLITI                    monolingual@mul
+```
+
+Supported value kinds: `item` (default), `url`, `string`, `external-id`,
+`coordinate` (`lat,lon`) and `monolingual@<lang>`. Qualifiers are still applied
+in a separate step; references are added by the use-case pipeline.
 
 ## Requirements
 
@@ -117,8 +163,8 @@ That's it — you are ready to run.
 
 ## Running
 
-1. Put your data in `testcases/example/input.qs` — or create a new folder
-   `testcases/<name>/input.qs` and point `job_dir` at it in `config.ini`.
+1. Point `config.ini` at a use case: `job_dir = usecases/ogham` (or
+   `usecases/software`), and set `[run] pipeline = true`.
 
 2. **Dry run** (writes nothing whilst `dry_run = true`):
 
@@ -127,9 +173,9 @@ That's it — you are ready to run.
    ```
 
 3. **Go live**: set `dry_run = false` in `config.ini`, then run `python main.py`
-   again.
+   again. For a first cautious run use `[run] limit = 1` (or `--limit 1`).
 
-Reports are written to `testcases/<name>/report/import_report_<timestamp>.json`.
+Reports are written to `usecases/<name>/report/import_report_<timestamp>.json`.
 
 ### In VS Code
 
@@ -145,13 +191,13 @@ the **currently open** `.qs` file (dry run, `--limit 1`).
 ```ini
 [wikibase]
 api_url    = https://federated-objects.de/w/api.php
-username   = YOUR_USERNAME@importbot
+username   = Fthierygeo@importbot
 password   = YOUR_BOT_PASSWORD
 user_agent = wikibase-qs-api-importer/1.1 (you@example.org)
 
 [job]
-job_dir = testcases/example      ; folder holding the .qs file; reports -> <folder>/report
-; qs_file = testcases/example/input.qs   ; alternatively a single file (takes precedence)
+job_dir = usecases/ogham         ; folder holding model.py / input.qs; reports -> <folder>/report
+; qs_file = usecases/ogham/input.qs     ; alternatively a single file (takes precedence)
 
 [import]
 dry_run          = true
@@ -159,6 +205,13 @@ skip_existing    = true
 maxlag           = 0
 mark_bot         = false
 throttle_seconds = 0.0
+
+[run]
+pipeline           = true    ; run the job folder's pipeline.py (create -> build -> import)
+limit              = 0       ; only the first N statements (0 = all)
+federate_bare_qids = false
+federate_bare_pids = false
+verbose            = false
 ```
 
 Relative paths are resolved **relative to `config.ini`**, so a run works
@@ -169,14 +222,18 @@ precedence and bypass INI `%` interpolation.
 ## Command-line options
 
 ```bash
-python main.py testcases/example              # explicit test-case folder
-python main.py testcases/example/input.qs     # a specific file
-python main.py --dry-run                       # never write
-python main.py --limit 1                       # only the first line (a good first test)
-python main.py --federate-bare-qids            # treat bare Q-IDs as Wikidata items
-python main.py --federate-bare-pids            # treat bare P-IDs as Wikidata properties
+python main.py                                 # runs the [job]; pipeline if [run] pipeline = true
+python main.py --pipeline                       # force the job folder's pipeline.py
+python main.py --no-pipeline                    # force a plain .qs import instead
+python main.py usecases/ogham                   # explicit job folder
+python main.py --dry-run                         # never write
+python main.py --limit 1                         # only the first line (a good first test)
+python main.py --federate-bare-qids              # treat bare Q-IDs as Wikidata items
+python main.py --federate-bare-pids              # treat bare P-IDs as Wikidata properties
 python main.py --no-skip-existing --verbose
 ```
+
+CLI flags override the `[run]` defaults in `config.ini`.
 
 ## Behaviour & safety nets
 
