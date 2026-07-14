@@ -1,0 +1,16 @@
+{
+  "equiv_wikidata_property": "P15",
+  "instance_of": "P1",
+  "developer": "P18",
+  "programmed_in": "P19",
+  "license": "P20",
+  "software_version": "P21",
+  "doi": "P22",
+  "source_code_repository": "P23",
+  "official_website": "P24",
+  "development_status": "P25",
+  "continuous_integration": "P26",
+  "readme": "P27",
+  "build_instructions": "P28",
+  "code_sample_type": "P29"
+}

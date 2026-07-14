@@ -245,6 +245,11 @@ class WikibaseClient:
                 log.warning("Server lag (maxlag); waiting %ss before retry.", wait)
                 time.sleep(wait)
                 continue
+            if code.startswith("internal_api_error") and attempt < max_attempts:
+                wait = 2.0 * attempt
+                log.warning("Transient server error (%s); waiting %ss before retry.", code, wait)
+                time.sleep(wait)
+                continue
 
             raise ApiError(result)
 
@@ -319,6 +324,34 @@ class WikibaseClient:
                 data["token"] = self.csrf_token()
                 result = self._post(data, check=False)
         return self._check(result)
+
+    def search_entities(
+        self,
+        search: str,
+        *,
+        entity_type: str = "property",
+        language: str = "en",
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        """Search items/properties by label (wbsearchentities). Returns the hits."""
+        params = {
+            "action": "wbsearchentities",
+            "search": search,
+            "language": language,
+            "uselang": language,
+            "type": entity_type,
+            "limit": limit,
+            "format": "json",
+        }
+        result = self._get(params)
+        return result.get("search", [])
+
+    def find_property_by_label(self, label: str, *, language: str = "en") -> str | None:
+        """Return the PID of an existing property whose label exactly matches, else None."""
+        for hit in self.search_entities(label, entity_type="property", language=language):
+            if hit.get("label", "").strip().lower() == label.strip().lower():
+                return hit.get("id")
+        return None
 
     def set_reference(self, claim_id: str, snaks: dict[str, Any]) -> dict[str, Any]:
         """Add a reference (snaks map property->[snak]) to a claim (wbsetreference)."""
