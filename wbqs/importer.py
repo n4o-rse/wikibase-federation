@@ -55,7 +55,10 @@ def run(
     log.info("Parsed %d statement(s).", len(statements))
     for st in statements:
         prop_kind = "fed-prop" if st.is_federated_property else "local-prop"
-        val_kind = "fed-val" if st.is_federated_value else "local-val"
+        if st.value_datatype == "wikibase-item":
+            val_kind = "fed-val" if st.is_federated_value else "local-val"
+        else:
+            val_kind = st.value_datatype
         log.info("  L%d: %s | %s | %s  [%s, %s]", st.line_no, st.entity, st.prop,
                  json.dumps(st.value_api, ensure_ascii=False), prop_kind, val_kind)
 
@@ -110,7 +113,8 @@ def run(
             log.error("ERR  L%d: %s", st.line_no, exc)
             report.append({
                 "line": st.line_no, "status": "error",
-                "code": exc.code, "info": exc.info, "statement": st.original,
+                "code": exc.code, "info": exc.info, "detail": exc.detail,
+                "messages": exc.messages, "statement": st.original,
             })
             n_err += 1
         except Exception as exc:  # network, JSON, etc.

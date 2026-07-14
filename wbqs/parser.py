@@ -66,14 +66,16 @@ class Statement:
     prop: str            # API "property" param: "P1" OR a Wikidata property URI
     prop_raw: str        # original property token as written in the file
     value_raw: str       # original value token as written in the file
-    value_api: dict      # value dict for wbcreateclaim (json.dumps'ed later)
+    value_api: object    # dict for item values, str for url/string/external-id
     line_no: int         # 1-based source line number
     original: str        # original, untrimmed source line
+    value_datatype: str = "wikibase-item"  # wikibase-item | url | string | external-id
 
     @property
     def is_federated_value(self) -> bool:
         """True if the value points at a foreign (Wikidata) item URI."""
-        return str(self.value_api.get("id", "")).startswith("http")
+        v = self.value_api
+        return isinstance(v, dict) and str(v.get("id", "")).startswith("http")
 
     # Backwards-compatible alias.
     is_federated = is_federated_value
@@ -170,6 +172,53 @@ def parse_value(value: str, *, federate_bare_qids: bool = False) -> dict:
     )
 
 
+EARTH_GLOBE = "http://www.wikidata.org/entity/Q2"
+
+_DATATYPE_ALIASES = {
+    "item": "wikibase-item",
+    "wikibase-item": "wikibase-item",
+    "url": "url",
+    "string": "string",
+    "external-id": "external-id",
+    "external_id": "external-id",
+    "externalid": "external-id",
+    "coordinate": "globe-coordinate",
+    "globe-coordinate": "globe-coordinate",
+    "globecoordinate": "globe-coordinate",
+    "monolingual": "monolingual",
+    "monolingual-text": "monolingual",
+    "monolingualtext": "monolingual",
+}
+
+
+def _parse_datatype_token(token: str, line_no: int) -> tuple[str, str | None]:
+    """Return (datatype, language). Language rides on the token: 'monolingual@mul'."""
+    raw = token.strip()
+    lang: str | None = None
+    if "@" in raw:
+        raw, lang = raw.split("@", 1)
+        raw, lang = raw.strip(), (lang.strip() or None)
+    key = raw.lower()
+    if key not in _DATATYPE_ALIASES:
+        raise ParseError(
+            f"Line {line_no}: unknown datatype {token!r} (use item | url | string | "
+            "external-id | coordinate | monolingual@<lang>)"
+        )
+    return _DATATYPE_ALIASES[key], lang
+
+
+def _parse_coordinate(value: str, line_no: int) -> dict:
+    parts = value.split(",")
+    if len(parts) != 2:
+        raise ParseError(f"Line {line_no}: coordinate must be 'lat,lon', got {value!r}")
+    try:
+        lat, lon = float(parts[0]), float(parts[1])
+    except ValueError as exc:
+        raise ParseError(f"Line {line_no}: bad coordinate numbers: {value!r}") from exc
+    return {"latitude": lat, "longitude": lon, "altitude": None,
+            "precision": 1e-6, "globe": EARTH_GLOBE}
+
+
 def parse_line(
     original: str,
     line_no: int,
@@ -182,15 +231,24 @@ def parse_line(
     if not line or line.startswith("#"):
         return None
 
-    # Prefer tab separation (QuickStatements style); fall back to whitespace.
+    # Tab separation (QuickStatements style). 3 columns = item value (default);
+    # an optional 4th column is a datatype hint. Fall back to whitespace only for
+    # the plain 3-column item form.
     parts = line.split("\t")
-    if len(parts) < 3:
-        parts = re.split(r"\s+", line, maxsplit=2)
+    if len(parts) in (3, 4):
+        cols = [p.strip() for p in parts]
+    else:
+        cols = [p.strip() for p in re.split(r"\s+", line, maxsplit=2)]
 
-    if len(parts) != 3:
-        raise ParseError(f"Line {line_no}: expected 3 columns, got {len(parts)}: {original!r}")
-
-    entity, prop_raw, value_raw = (p.strip() for p in parts)
+    lang: str | None = None
+    if len(cols) == 3:
+        entity, prop_raw, value_raw = cols
+        datatype = "wikibase-item"
+    elif len(cols) == 4:
+        entity, prop_raw, value_raw, dt_raw = cols
+        datatype, lang = _parse_datatype_token(dt_raw, line_no)
+    else:
+        raise ParseError(f"Line {line_no}: expected 3 or 4 columns, got {len(cols)}: {original!r}")
 
     if not LOCAL_QID.match(entity):
         raise ParseError(
@@ -199,7 +257,21 @@ def parse_line(
 
     try:
         prop = parse_property(prop_raw, federate_bare_pids=federate_bare_pids)
-        value_api = parse_value(value_raw, federate_bare_qids=federate_bare_qids)
+        if datatype == "wikibase-item":
+            value_api: object = parse_value(value_raw, federate_bare_qids=federate_bare_qids)
+        elif datatype == "globe-coordinate":
+            value_api = _parse_coordinate(value_raw, line_no)
+        elif datatype == "monolingual":
+            if not lang:
+                raise ParseError("monolingual value needs a language, e.g. 'monolingual@mul'")
+            if not value_raw.strip():
+                raise ParseError("empty monolingual value")
+            value_api = {"text": value_raw.strip(), "language": lang}
+        else:
+            # url / string / external-id: a literal string.
+            value_api = value_raw.strip()
+            if not value_api:
+                raise ParseError(f"empty {datatype} value")
     except ParseError as exc:
         raise ParseError(f"Line {line_no}: {exc}") from exc
 
@@ -211,6 +283,7 @@ def parse_line(
         value_api=value_api,
         line_no=line_no,
         original=original,
+        value_datatype=datatype,
     )
 
 

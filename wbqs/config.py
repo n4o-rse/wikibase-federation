@@ -153,6 +153,41 @@ def resolve_job(
     )
 
 
+def resolve_job_dir(
+    config: configparser.ConfigParser,
+    base_dir: Path,
+    cli_target: Path | None = None,
+) -> Path:
+    """Return the job *directory*, tolerating a not-yet-generated input.qs.
+
+    Used by the pipeline path, which must know the folder before build_qs has
+    created the .qs file inside it.
+    """
+    if cli_target is not None:
+        t = cli_target.expanduser()
+        return t if t.is_dir() else t.parent
+    jd = (
+        config.get("job", "job_dir", fallback="").strip()
+        or config.get("job", "testcase", fallback="").strip()
+    )
+    if jd:
+        return _resolve_rel(jd, base_dir)
+    qf = config.get("job", "qs_file", fallback="").strip()
+    if qf:
+        return _resolve_rel(qf, base_dir).parent
+    dd = config.get("import", "data_dir", fallback="").strip()
+    if dd:
+        return _resolve_rel(dd, base_dir)
+    raise ConfigError("No job directory configured (set [job] job_dir in config.ini).")
+
+
+def read_config(path: Path) -> configparser.ConfigParser:
+    cp = configparser.ConfigParser()
+    if not cp.read(path, encoding="utf-8"):
+        raise ConfigError(f"Could not read config: {path}")
+    return cp
+
+
 def load(
     config_path: Path | None,
     cli_target: Path | None = None,

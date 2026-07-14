@@ -35,8 +35,32 @@ class ApiError(RuntimeError):
         err = response.get("error", {})
         self.code = err.get("code", "unknown")
         self.info = err.get("info", "")
+        self.messages = err.get("messages")
         self.response = response
-        super().__init__(f"API error [{self.code}]: {self.info}")
+        self.detail = _extract_message_names(self.messages)
+        msg = f"API error [{self.code}]: {self.info}"
+        if self.detail:
+            msg += f" -> {self.detail}"
+        super().__init__(msg)
+
+
+def _extract_message_names(messages: Any) -> str:
+    """Pull the message names/text out of a MediaWiki error 'messages' block."""
+    if not isinstance(messages, list):
+        return ""
+    out: list[str] = []
+    for m in messages:
+        if not isinstance(m, dict):
+            continue
+        name = m.get("name")
+        html = m.get("html")
+        text = html.get("*") if isinstance(html, dict) else None
+        piece = name or ""
+        if text and text != name:
+            piece = f"{piece}: {text}" if piece else text
+        if piece:
+            out.append(piece)
+    return " | ".join(out)
 
 
 class WikibaseClient:
@@ -157,15 +181,30 @@ class WikibaseClient:
     def claim_exists(self, statement: Statement) -> bool:
         entity = self.get_entity(statement.entity)
         claims = entity.get("claims", {}).get(statement.prop, [])
-        wanted_id = statement.value_api.get("id")
+        wanted = statement.value_api
+        dt = statement.value_datatype
         for claim in claims:
             value = (
                 claim.get("mainsnak", {})
                 .get("datavalue", {})
-                .get("value", {})
+                .get("value")
             )
-            if isinstance(value, dict) and value.get("id") == wanted_id:
-                return True
+            if dt == "wikibase-item":
+                if isinstance(value, dict) and isinstance(wanted, dict) \
+                        and value.get("id") == wanted.get("id"):
+                    return True
+            elif dt == "monolingual":
+                if isinstance(value, dict) and isinstance(wanted, dict) \
+                        and value.get("text") == wanted.get("text") \
+                        and value.get("language") == wanted.get("language"):
+                    return True
+            elif dt == "globe-coordinate":
+                if isinstance(value, dict) and isinstance(wanted, dict) \
+                        and _coord_close(value, wanted):
+                    return True
+            else:
+                if value == wanted:
+                    return True
         return False
 
     # -- writes --------------------------------------------------------------
@@ -210,6 +249,104 @@ class WikibaseClient:
             raise ApiError(result)
 
         raise ApiError({"error": {"code": "retries-exhausted", "info": "wbcreateclaim"}})
+
+    # -- entity creation -----------------------------------------------------
+
+    def create_entity(
+        self,
+        *,
+        new: str,
+        labels: dict[str, str] | None = None,
+        descriptions: dict[str, str] | None = None,
+        aliases: dict[str, list[str]] | None = None,
+        datatype: str | None = None,
+    ) -> dict[str, Any]:
+        """Create a new item or property via wbeditentity.
+
+        new:        "item" or "property".
+        datatype:   required when new == "property" (e.g. "url", "external-id").
+        Returns the API result; the new id is at result["entity"]["id"].
+        """
+        data: dict[str, Any] = {}
+        if labels:
+            data["labels"] = {lang: {"language": lang, "value": v} for lang, v in labels.items()}
+        if descriptions:
+            data["descriptions"] = {lang: {"language": lang, "value": v} for lang, v in descriptions.items()}
+        if aliases:
+            data["aliases"] = {
+                lang: [{"language": lang, "value": a} for a in vals]
+                for lang, vals in aliases.items()
+            }
+        if new == "property":
+            if not datatype:
+                raise ValueError("datatype is required when creating a property")
+            data["datatype"] = datatype
+
+        params = {
+            "action": "wbeditentity",
+            "new": new,
+            "data": json.dumps(data, ensure_ascii=False),
+            "token": self.csrf_token(),
+            "assert": "user",
+        }
+        if self.mark_bot:
+            params["bot"] = "1"
+
+        result = self._post(params, check=False)
+        if "error" in result:
+            code = result["error"].get("code", "")
+            if code in {"badtoken", "notoken"}:
+                self.csrf_token(force=True)
+                params["token"] = self.csrf_token()
+                result = self._post(params, check=False)
+        return self._check(result)
+
+    def remove_claim(self, claim_id: str) -> dict[str, Any]:
+        """Remove a single claim by its GUID (wbremoveclaims)."""
+        data = {
+            "action": "wbremoveclaims",
+            "claim": claim_id,
+            "token": self.csrf_token(),
+            "assert": "user",
+        }
+        if self.mark_bot:
+            data["bot"] = "1"
+        result = self._post(data, check=False)
+        if "error" in result:
+            code = result["error"].get("code", "")
+            if code in {"badtoken", "notoken"}:
+                self.csrf_token(force=True)
+                data["token"] = self.csrf_token()
+                result = self._post(data, check=False)
+        return self._check(result)
+
+    def set_reference(self, claim_id: str, snaks: dict[str, Any]) -> dict[str, Any]:
+        """Add a reference (snaks map property->[snak]) to a claim (wbsetreference)."""
+        data = {
+            "action": "wbsetreference",
+            "statement": claim_id,
+            "snaks": json.dumps(snaks, ensure_ascii=False),
+            "token": self.csrf_token(),
+            "assert": "user",
+        }
+        if self.mark_bot:
+            data["bot"] = "1"
+        result = self._post(data, check=False)
+        if "error" in result:
+            code = result["error"].get("code", "")
+            if code in {"badtoken", "notoken"}:
+                self.csrf_token(force=True)
+                data["token"] = self.csrf_token()
+                result = self._post(data, check=False)
+        return self._check(result)
+
+
+def _coord_close(a: dict[str, Any], b: dict[str, Any], tol: float = 1e-5) -> bool:
+    try:
+        return (abs(float(a.get("latitude")) - float(b.get("latitude"))) <= tol
+                and abs(float(a.get("longitude")) - float(b.get("longitude"))) <= tol)
+    except (TypeError, ValueError):
+        return False
 
 
 def _retry_after_seconds(result: dict[str, Any], *, default: int) -> float:

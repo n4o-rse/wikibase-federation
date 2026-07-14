@@ -144,3 +144,72 @@ def test_parse_file_rejects_bad_property(tmp_path: Path):
     f.write_text("Q3\tX1\tQ4\n", encoding="utf-8")
     with pytest.raises(ParseError):
         parse_qs_file(f)
+
+
+# -- datatype column (url / string / external-id) ----------------------------
+
+
+def test_url_value_is_literal_string(tmp_path: Path):
+    f = tmp_path / "in.qs"
+    f.write_text("Q5\twd:P2888\thttps://database.factgrid.de/entity/Q1000294\turl\n", encoding="utf-8")
+    st = parse_qs_file(f)[0]
+    assert st.value_datatype == "url"
+    assert st.value_api == "https://database.factgrid.de/entity/Q1000294"
+    assert st.is_federated_value is False        # a url literal is not a federated item
+    assert st.is_federated_property is True
+
+
+def test_external_id_value(tmp_path: Path):
+    f = tmp_path / "in.qs"
+    f.write_text("Q5\tP8\tgares_1\texternal-id\n", encoding="utf-8")
+    st = parse_qs_file(f)[0]
+    assert st.value_datatype == "external-id"
+    assert st.value_api == "gares_1"
+
+
+def test_three_column_item_still_default(tmp_path: Path):
+    f = tmp_path / "in.qs"
+    f.write_text("Q5\twd:P31\thttp://www.wikidata.org/entity/Q2016147\n", encoding="utf-8")
+    st = parse_qs_file(f)[0]
+    assert st.value_datatype == "wikibase-item"
+    assert isinstance(st.value_api, dict)
+    assert st.is_federated_value is True
+
+
+def test_unknown_datatype_raises(tmp_path: Path):
+    f = tmp_path / "in.qs"
+    f.write_text("Q5\tP8\tfoo\tquantity\n", encoding="utf-8")
+    with pytest.raises(ParseError):
+        parse_qs_file(f)
+
+
+def test_coordinate_value(tmp_path: Path):
+    f = tmp_path / "in.qs"
+    f.write_text("Q5\twd:P625\t51.893659,-8.492443\tcoordinate\n", encoding="utf-8")
+    st = parse_qs_file(f)[0]
+    assert st.value_datatype == "globe-coordinate"
+    assert st.value_api["latitude"] == pytest.approx(51.893659)
+    assert st.value_api["longitude"] == pytest.approx(-8.492443)
+    assert st.value_api["globe"].endswith("Q2")
+
+
+def test_monolingual_value(tmp_path: Path):
+    f = tmp_path / "in.qs"
+    f.write_text("Q5\twd:P1684\tCASSITTAS MAQI MUCOI CALLITI\tmonolingual@mul\n", encoding="utf-8")
+    st = parse_qs_file(f)[0]
+    assert st.value_datatype == "monolingual"
+    assert st.value_api == {"text": "CASSITTAS MAQI MUCOI CALLITI", "language": "mul"}
+
+
+def test_monolingual_without_language_raises(tmp_path: Path):
+    f = tmp_path / "in.qs"
+    f.write_text("Q5\twd:P1684\tsome text\tmonolingual\n", encoding="utf-8")
+    with pytest.raises(ParseError):
+        parse_qs_file(f)
+
+
+def test_bad_coordinate_raises(tmp_path: Path):
+    f = tmp_path / "in.qs"
+    f.write_text("Q5\twd:P625\tnot,coords\tcoordinate\n", encoding="utf-8")
+    with pytest.raises(ParseError):
+        parse_qs_file(f)
