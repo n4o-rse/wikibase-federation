@@ -1,23 +1,39 @@
-# Crosswalk — Ogham Federation Use Case (CIIC 81) — FROZEN (Plan B)
+# Crosswalk — Ogham Federation Use Case (CIIC 81) — FROZEN
 
-Subject: the Ogham stone **CIIC 81 / UCC Stone Corridor #4**, modelled as a *thin
+Subject: the Ogham stone **CIIC 81 / UCC Stone Corridor IV**, modelled as a *thin
 federating hub* item (**Q5**) in `federated-objects.de`.
 
+Reference frames: **Wikidata** for the generic layer, **CIDOC CRM** for the
+domain-specific relations, and the **source Wikibases** (FactGrid, Fuzzy-SL,
+Semantic Kompakkt, SquirrelBase, LinkedOgham) for the detail that stays
+authoritative elsewhere.
+
 **Modelling principle**
-- Exact Wikidata property exists → **federated Wikidata property** (Fall 2).
-- Generic item values → **native Wikidata federation** (works today).
+- Exact Wikidata property exists → reuse it. It is written via a **local
+  property** and/or the **federated** `wd:P...` (see `PROPERTY_MODE`).
+- Generic item values → **native Wikidata value federation**.
 - Cross-Wikibase links → **per-source `external-id` + formatter URL** (Plan B),
   queried via SPARQL federation; upgradeable to native values later.
-- **Local, new properties only** where our own CIDOC CRM frame applies.
+- **Local, new properties** only where our own frame applies (per-source IDs).
 - Materialised values (coordinate, inscription) carry a **reference** to the
-  source (also as external-id, since url datatype is blocked here).
+  source (also as external-id, since the url datatype is blocked here).
 
-**Why Plan B (external-id) and not url:** on this instance the **url datatype is
-blocked** — url values fail to save via both API and UI (`failed-save`), while
-external-id/string/item save fine. Each cross-Wikibase link is therefore an
-external-id (`Q1000294`) plus a formatter URL (`https://database.factgrid.de/entity/$1`),
-which — once the instance's `formatterUrlProperty` is set — renders as a link and
-emits a normalised IRI node (`wdtn:`) in RDF, exactly what SPARQL federation needs.
+**Two switches (in `model.py`)** — same mechanism as the Software use case:
+- `PROPERTY_MODE = "federated"` → predicate is `wd:P...` (needs Federated
+  Properties); `"local"` → a local property (works on any Wikibase);
+  `"local+federated"` → **both**, side by side, for the comparison. Each local
+  equivalent records its Wikidata property via a string `equivalent Wikidata
+  property` (P15). The cross-Wikibase links (#9–16) are always local.
+- `USE_FEDERATED_VALUES` → item values as federated `wd:Q...` (default) or as
+  external-id "Wikidata ID" literals (fully federation-free).
+
+The live import used `PROPERTY_MODE = "local+federated"`.
+
+**Why Plan B (external-id) and not url:** the **url datatype is blocked** on this
+instance — url values fail to save (API + UI), while external-id/string/item
+save fine. Each cross-Wikibase link is therefore an external-id plus a formatter
+URL, which — once `formatterUrlProperty` is set — renders as a link and emits a
+normalised IRI (`wdtn:`) for SPARQL federation.
 
 ---
 
@@ -31,54 +47,73 @@ emits a normalised IRI node (`wdtn:`) in RDF, exactly what SPARQL federation nee
 
 ---
 
-## 2. Properties
+## 2. Properties (live PIDs)
 
-Pre-existing local: P1 instance of, P2 place of birth, P3 subclass of.
-Federated Wikidata properties are used directly (proven via the wd:P5572 test).
+**(a) Local equivalents of the Wikidata predicates** — each carries `equivalent
+Wikidata property = P<nn>`; in `local+federated` mode the fact is also written via
+the `wd:P...` twin.
 
-| Property | Source / PID | Datatype | Role |
+| Local property | PID | Datatype | Wikidata equiv |
 |---|---|---|---|
-| instance of | wd:P31 | item | classification (Ogham stone) |
-| writing system | wd:P282 | item | script = Ogham |
-| location of discovery | wd:P189 | item | findspot (Garranes) |
-| location | wd:P276 | item | current location = Stone Corridor |
-| collection | wd:P195 | item | holding institution = UCC |
-| coordinate location | wd:P625 | globe-coordinate | current-location coordinate |
-| inscription | wd:P1684 | monolingual (mul) | materialised from FactGrid + reference |
-| formatter URL | **P8** (local) | string | designates the ID formatter (needs `formatterUrlProperty`) |
-| Wikidata ID | **P9** (local) | external-id | same object in Wikidata |
-| FactGrid ID | **P10** (local) | external-id | same object in FactGrid |
-| Fuzzy-SL ID | **P11** (local) | external-id | same object in Fuzzy-SL |
-| LinkedOgham ID | **P12** (local) | external-id | same object in LinkedOgham |
-| Semantic Kompakkt ID | **P13** (local) | external-id | 3D representation (CIDOC P138i) |
-| SquirrelBase ID | **P14** (local) | external-id | FDO / 3D (CIDOC P138i) |
-| CIIC number | **P5** (local) | external-id | Macalister CIIC |
-| CISP id | **P6** (local) | external-id | CISP database |
+| instance of | **P1** * | item | P31 |
+| writing system | **P32** | item | P282 |
+| location of discovery | **P33** | item | P189 |
+| location | **P34** | item | P276 |
+| collection | **P35** | item | P195 |
+| coordinate location | **P36** | globe-coordinate | P625 |
+| inscription | **P37** | monolingualtext | P1684 |
+| equivalent Wikidata property | **P15** ** | string | — (meta) |
 
-Each ID property carries a formatter URL (set via P8), e.g. `…/entity/$1`.
+\* `instance of` reused the pre-existing local **P1** (label-conflict auto-resolve).
+\*\* `equivalent Wikidata property` reused **P15**, created for the Software use case.
+
+**(b) Cross-Wikibase links (Plan B)** — external-id + per-source formatter URL,
+always local (no Wikidata equivalent).
+
+| Local property | PID | Formatter URL |
+|---|---|---|
+| formatter URL | **P8** | (designates the ID formatter; needs `formatterUrlProperty`) |
+| Wikidata ID | **P9** | http://www.wikidata.org/entity/$1 |
+| FactGrid ID | **P10** | https://database.factgrid.de/entity/$1 |
+| Fuzzy-SL ID | **P11** | https://fuzzy-sl.wikibase.cloud/entity/$1 |
+| LinkedOgham ID | **P12** | http://lod.ogham.link/data/$1 |
+| Semantic Kompakkt ID | **P13** | https://wikibase.semantic-kompakkt.de/entity/$1 |
+| SquirrelBase ID | **P14** | https://squirrelbase.wikibase.cloud/entity/$1 |
+| CIIC number | **P5** | (Macalister CIIC) |
+| CISP id | **P6** | http://w3id.org/cispdb/stone/$1 |
+
+(`has digital representation` P4 exists from an earlier iteration but is unused.)
 
 ---
 
-## 3. Q5 — statements (all live, 16/16)
+## 3. Q5 — statements (all live)
 
-| # | Property | Value | Reference |
-|---|---|---|---|
-| 1 | wd:P31 instance of | wd:Q2016147 (Ogham stone) | — |
-| 2 | wd:P282 writing system | wd:Q184661 (Ogham) | — |
-| 3 | wd:P189 location of discovery | wd:Q69385525 (Garranes Site) + findspot coord (qualifier) | — |
-| 4 | wd:P189 location of discovery | wd:Q104295278 (Garranes townland) | — |
-| 5 | wd:P276 location | wd:Q69379477 (Stone Corridor UCC) | — |
-| 6 | wd:P195 collection | wd:Q1574185 (UCC) | — |
-| 7 | wd:P625 coordinate | 51.893659, −8.492443 | P11 Fuzzy-SL = Q74 |
-| 8 | wd:P1684 inscription | "C[A]SSITT[A]S MAQI MUCOI CALLITI" @mul | P10 FactGrid = Q1000294 |
-| 9 | P9 Wikidata ID | Q130529871 | — |
-| 10 | P10 FactGrid ID | Q1000294 | — |
-| 11 | P11 Fuzzy-SL ID | Q74 | — |
-| 12 | P12 LinkedOgham ID | Y50000081 | — |
-| 13 | P13 Semantic Kompakkt ID | Q1247 | — |
-| 14 | P14 SquirrelBase ID | Q48 | — |
-| 15 | P5 CIIC number | 81 | — |
-| 16 | P6 CISP id | gares_1 | — |
+**Wikidata-mapped (#1–8)** — in `local+federated` each is written twice: via the
+local property and via the federated twin.
+
+| # | Property | Local / Federated | Value | Reference |
+|---|---|---|---|---|
+| 1 | instance of | P1 / wd:P31 | wd:Q2016147 (Ogham stone) | — |
+| 2 | writing system | P32 / wd:P282 | wd:Q184661 (Ogham) | — |
+| 3 | location of discovery | P33 / wd:P189 | wd:Q69385525 (Garranes Site) | — |
+| 4 | location of discovery | P33 / wd:P189 | wd:Q104295278 (Garranes townland) | — |
+| 5 | location | P34 / wd:P276 | wd:Q69379477 (Stone Corridor UCC) | — |
+| 6 | collection | P35 / wd:P195 | wd:Q1574185 (UCC) | — |
+| 7 | coordinate location | P36 / wd:P625 | 51.893659, −8.492443 | P11 Fuzzy-SL = Q74 |
+| 8 | inscription | P37 / wd:P1684 | "C[A]SSITT[A]S MAQI MUCOI CALLITI" @mul | P10 FactGrid = Q1000294 |
+
+**Cross-Wikibase links (#9–16)** — external-id, always local.
+
+| # | Property | Value |
+|---|---|---|
+| 9 | Wikidata ID (P9) | Q130529871 |
+| 10 | FactGrid ID (P10) | Q1000294 |
+| 11 | Fuzzy-SL ID (P11) | Q74 |
+| 12 | LinkedOgham ID (P12) | Y50000081 |
+| 13 | Semantic Kompakkt ID (P13) | Q1247 |
+| 14 | SquirrelBase ID (P14) | Q48 |
+| 15 | CIIC number (P5) | 81 |
+| 16 | CISP id (P6) | gares_1 |
 
 Findspot coordinate (Garranes ~51.8166 / −8.7659) is a `wd:P625` qualifier on #3,
 not a second primary coordinate.
@@ -92,7 +127,7 @@ not a second primary coordinate.
 | Rich spatial info (fuzzy locations, 2nd point) | Fuzzy-SL Q74 | P11 |
 | Related persons (CASSITTAS, CALLITI) | FactGrid Q1000294 | P10 |
 | 3D model + annotations | Semantic Kompakkt Q1247 | P13 |
-| FDO + Zenodo DOI (10.5281/zenodo.18724635) | SquirrelBase Q48 | P14 |
+| FDO + Zenodo DOI | SquirrelBase Q48 | P14 |
 
 Inscription (#8) is materialised *with a reference* to FactGrid; FactGrid stays
 the single source of truth.
@@ -112,30 +147,29 @@ SELECT ?inscription WHERE {
 }
 ```
 
-`fotn:` = this instance's normalised-value prefix (…/prop/direct-normalized/).
-Run on the instance query service if FactGrid is allowlisted, else via
-`sparql.dblp.org`.
+`fotn:` = this instance's normalised-value prefix. Requires FactGrid on the
+query-service allowlist.
 
 ---
 
-## 6. Open instance-config items (reported to WMDE devs)
+## 6. Instance-config findings (reported to WMDE devs)
 
 1. **url datatype blocked** — url values fail to save (API + UI); external-id /
-   string / item save fine. Needs a look at SpamBlacklist / AbuseFilter /
-   `$wgUrlProtocols` / url validation.
-2. **Federated items show "(Deleted Item)"** — newly referenced Wikidata items
-   render unresolved via the API path; the alpha's API representation of
-   federated items is not implemented yet. Registering each item once via the UI
-   resolves it.
-3. **`formatterUrlProperty` not set** — set
-   `$wgWBRepoSettings['formatterUrlProperty'] = 'P8'` (+ rebuildPropertyInfo.php),
-   or map P8 to P1630 on wikibase.cloud, so external-ids render as links and emit
-   the `wdtn:` IRI needed by the query above.
+   string / item save fine. Bridged via external-id + formatter.
+2. **Federated items show "(Deleted Item)"** — federated Wikidata item values
+   render unresolved via the API until registered once via the UI (alpha gap).
+3. **`formatterUrlProperty` not set** — set it (e.g. to P8) so external-ids
+   render as links and emit the `wdtn:` IRI the query above needs.
+4. **`internal_api_error_TypeError`** — transient PHP TypeError on rapid
+   `wbcreateclaim` / `wbgetentities`; mitigated client-side by retry + throttle.
 
 ---
 
 ## 7. Reproduce
 
-`python main.py` (pipeline): ensure Q5 → ensure P5/P6/P8–P14 + formatters →
-build input.qs → import 16 statements → apply references. Idempotent and
-dry-run-safe. Source of truth: `usecases/ogham/model.py`.
+`python main.py` with `[job] job_dir = usecases/ogham` and `[run] pipeline =
+true`: ensure hub item (Q5) → ensure local properties (P1 reused, P15 reused,
+P32–P37 + the external-id set) + formatters + equivalence mappings → build
+input.qs → import → apply references. Idempotent, dry-run-safe, retries transient
+errors. Source of truth: `usecases/ogham/model.py`. Flip `PROPERTY_MODE = "local"`
+or `"federated"` for the other two variants.
