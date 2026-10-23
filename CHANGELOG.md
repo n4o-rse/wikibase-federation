@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.2.0
+- New use case `usecases/chublets/` (S7g of wikibase-static): pushes the CSV model of
+  `chublets-wikibase-demo` into a real Wikibase with `wbeditentity`. Phases `core`, `model`, `items`;
+  local properties only, federated Wikidata items as values, `url` as `string`; dry run by default;
+  `idmap-<target>.csv` and `state-<target>.json` make reruns idempotent.
+- `WikibaseClient`: new `edit_entity` (complete Wikibase JSON, create or add claims), `get_entities`
+  (batched, missing ids map to `None`) and `siteinfo`.
+- `config.example.ini`: new `[chublets]` section.
+- Tests: `tests/test_chublets_push.py` (16 tests against a fake API).
+
 ## 1.1.0
 - Restructured into a `wbqs/` package (parser, client, config, importer) with a
   thin `main.py` entry point.

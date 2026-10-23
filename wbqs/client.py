@@ -18,7 +18,7 @@ except Exception:  # pragma: no cover - extremely unlikely
 
 from .parser import Statement
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 DEFAULT_USER_AGENT = (
     f"wikibase-qs-api-importer/{__version__} "
@@ -312,6 +312,69 @@ class WikibaseClient:
                 self.csrf_token(force=True)
                 params["token"] = self.csrf_token()
                 result = self._post(params, check=False)
+        return self._check(result)
+
+    def siteinfo(self) -> dict[str, Any]:
+        """Read-only: generator, extensions and site name (the first thing a probe asks)."""
+        result = self._get({
+            "action": "query",
+            "meta": "siteinfo",
+            "siprop": "general|extensions",
+        })["query"]
+        return {
+            "generator": result.get("general", {}).get("generator", ""),
+            "sitename": result.get("general", {}).get("sitename", ""),
+            "extensions": sorted(e.get("name", "") for e in result.get("extensions", [])),
+        }
+
+    def get_entities(self, ids: list[str]) -> dict[str, dict[str, Any] | None]:
+        """Read up to 50 entities per request; an id that does not exist maps to None."""
+        out: dict[str, dict[str, Any] | None] = {}
+        for i in range(0, len(ids), 50):
+            chunk = ids[i:i + 50]
+            result = self._get({"action": "wbgetentities", "ids": "|".join(chunk)}, check=False)
+            if "error" in result and result["error"].get("code") not in {"no-such-entity"}:
+                raise ApiError(result)
+            entities = result.get("entities", {})
+            for eid in chunk:
+                ent = entities.get(eid)
+                out[eid] = None if (ent is None or "missing" in ent or "id" not in ent) else ent
+        return out
+
+    def edit_entity(
+        self,
+        data: dict[str, Any],
+        *,
+        entity_id: str | None = None,
+        new: str | None = None,
+        summary: str | None = None,
+    ) -> dict[str, Any]:
+        """wbeditentity with a complete Wikibase JSON fragment.
+
+        Pass ``new="item"|"property"`` to create, or ``entity_id`` to add to an
+        existing entity (claims without an ``id`` are added, never replaced).
+        """
+        if (entity_id is None) == (new is None):
+            raise ValueError("give exactly one of entity_id and new")
+        params: dict[str, Any] = {
+            "action": "wbeditentity",
+            "data": json.dumps(data, ensure_ascii=False),
+            "token": self.csrf_token(),
+            "assert": "user",
+        }
+        if new is not None:
+            params["new"] = new
+        else:
+            params["id"] = entity_id
+        if summary:
+            params["summary"] = summary
+        if self.mark_bot:
+            params["bot"] = "1"
+        result = self._post(params, check=False)
+        if "error" in result and result["error"].get("code", "") in {"badtoken", "notoken"}:
+            self.csrf_token(force=True)
+            params["token"] = self.csrf_token()
+            result = self._post(params, check=False)
         return self._check(result)
 
     def remove_claim(self, claim_id: str) -> dict[str, Any]:
