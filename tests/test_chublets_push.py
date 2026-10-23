@@ -30,8 +30,11 @@ class FakeWikibase:
         self.calls: list[tuple] = []
         self.fail_labels: set[str] = set()
         self.property_datatypes: dict[str, str] = {}
-        for eid, label in (preset or {}).items():
+        for eid, spec in (preset or {}).items():
+            label, datatype = spec if isinstance(spec, tuple) else (spec, None)
             self.entities[eid] = {"id": eid, "labels": {"en": {"language": "en", "value": label}}, "claims": {}}
+            if datatype:
+                self.entities[eid]["datatype"] = datatype
             self.counter[eid[0]] = max(self.counter[eid[0]], int(eid[1:]))
 
     def login(self) -> None:
@@ -62,6 +65,13 @@ class FakeWikibase:
             claim["id"] = f"{entity_id}${len(ent['claims']) + 1:04d}-guid"
             ent["claims"].setdefault(claim["mainsnak"]["property"], []).append(claim)
         return {"success": 1, "entity": ent}
+
+    def entity_namespaces(self):
+        return {"wikibase-item": 120, "wikibase-property": 122}
+
+    def list_titles(self, namespace):
+        prefix, letter = ("Item:", "Q") if namespace == 120 else ("Property:", "P")
+        return [prefix + e for e in sorted(self.entities) if e.startswith(letter)]
 
     @property
     def writes(self) -> int:
@@ -167,22 +177,24 @@ def source_dir(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def make(source_dir: Path, tmp_path: Path, client, *, dry_run=False, values="federated", url_as_string=True):
+def make(source_dir: Path, tmp_path: Path, client, *, dry_run=False, values="federated", url_as_string=True, core_ids="same"):
     src = push.load_source(source_dir)
     idmap = push.IdMap(tmp_path / "idmap-test.csv")
     state = push.ClaimState(tmp_path / "state-test.json")
-    settings = push.Settings(values=values, url_as_string=url_as_string)
+    settings = push.Settings(values=values, url_as_string=url_as_string, core_ids=core_ids)
     return src, push.Pusher(src, client, idmap, state, settings, dry_run=dry_run)
 
 
 def run_phases(source_dir, tmp_path, client, phases, **kw):
+    adopt = kw.pop("adopt", None)
+    core_ids = kw.pop("core_ids", "same")
     dry = kw.pop("dry_run", False)
     values = kw.pop("values", "federated")
     origins = kw.pop("origins", None)
     limit = kw.pop("limit", None)
-    src, pusher = make(source_dir, tmp_path, client, dry_run=dry, values=values, **kw)
+    src, pusher = make(source_dir, tmp_path, client, dry_run=dry, values=values, core_ids=core_ids, **kw)
     ids = push.select(src, set(phases), values=values, origins=origins, limit=limit)
-    report = pusher.run(ids)
+    report = pusher.run(ids, adopt)
     return src, pusher, report
 
 
@@ -351,3 +363,98 @@ def test_failed_entity_is_reported_and_the_run_continues(source_dir, tmp_path):
     _, pusher, rep = run_phases(source_dir, tmp_path, fake, ["model"])
     assert any("Q101" in f for f in rep.failed_entities)
     assert "P100" in pusher.idmap.map                          # later entities still went through
+
+
+# -- a target that is not empty: adopt and core_ids = any ------------------------
+
+
+def existing_target() -> FakeWikibase:
+    """A target that already has Q1 'Chublet', P1 'developer' (wikibase-item) and P2 'subclass of'."""
+    return FakeWikibase({"Q1": "Chublet", "P1": ("developer", "wikibase-item"), "P2": ("subclass of", "wikibase-item")})
+
+
+def test_core_ids_any_creates_new_ids_and_adopts_what_exists(source_dir, tmp_path):
+    fake = existing_target()
+    _, pusher, rep = run_phases(source_dir, tmp_path, fake, ["core", "model"], core_ids="any",
+                                adopt={"Q101": "Q1", "P100": "P1"})
+    idm = pusher.idmap.map
+    assert idm["Q101"] == "Q1" and idm["P100"] == "P1"            # adopted, not created again
+    assert idm["Q1"] == "Q2" and idm["Q2"] == "Q3" and idm["Q3"] == "Q4"    # core: the next free ids
+    assert idm["P1"] == "P3" and idm["P10"] == "P12"                # P1 and P2 of the target are taken
+    labels = [e["labels"]["en"]["value"].lower() for e in fake.entities.values()]
+    assert labels.count("chublet") == 1 and labels.count("developer") == 1
+    assert sorted(rep.adopted) == ["P100", "Q101"] and rep.failed_entities == []
+    # the CSV claims were added to the adopted entity, with mapped ids
+    claim = fake.entities["Q1"]["claims"][idm["P1"]][0]
+    assert claim["mainsnak"]["datavalue"]["value"]["id"] == idm["Q100"]
+
+
+def test_adopt_run_twice_writes_nothing_new(source_dir, tmp_path):
+    fake = existing_target()
+    kw = dict(core_ids="any", adopt={"Q101": "Q1", "P100": "P1"})
+    run_phases(source_dir, tmp_path, fake, ["core", "model"], **kw)
+    n = fake.writes
+    run_phases(source_dir, tmp_path, fake, ["core", "model"], **kw)
+    assert fake.writes == n
+
+
+def test_adopt_aborts_when_the_label_differs(source_dir, tmp_path):
+    fake = FakeWikibase({"Q1": "Something else"})
+    with pytest.raises(push.PushAbort, match="Something else"):
+        run_phases(source_dir, tmp_path, fake, ["model"], core_ids="any", adopt={"Q101": "Q1"})
+    assert fake.writes == 0
+
+
+def test_adopt_aborts_when_the_entity_is_missing_or_the_datatype_differs(source_dir, tmp_path):
+    with pytest.raises(push.PushAbort, match="does not exist"):
+        run_phases(source_dir, tmp_path, FakeWikibase(), ["model"], core_ids="any", adopt={"Q101": "Q9"})
+    fake = FakeWikibase({"P1": ("developer", "string")})
+    with pytest.raises(push.PushAbort, match="datatype"):
+        run_phases(source_dir, tmp_path, fake, ["model"], core_ids="any", adopt={"P100": "P1"})
+
+
+def test_adopt_ignores_ids_the_source_does_not_have(source_dir, tmp_path):
+    fake = FakeWikibase({"Q1": "Chublet"})
+    _, pusher, _ = run_phases(source_dir, tmp_path, fake, ["core"], core_ids="any", adopt={"Q999": "Q1"})
+    assert "Q999" not in pusher.idmap.map
+
+
+def test_adopt_file_must_pair_the_same_kind(tmp_path):
+    f = tmp_path / "adopt.csv"
+    f.write_text("source_id,target_id\nQ101,P1\n", encoding="utf-8")
+    with pytest.raises(push.PushAbort, match="same kind"):
+        push.load_adopt(f)
+    f.write_text("source_id,target_id\nQ101,Q1\nP100,P1\n", encoding="utf-8")
+    assert push.load_adopt(f) == {"Q101": "Q1", "P100": "P1"}
+    assert push.load_adopt(tmp_path / "missing.csv") == {}
+
+
+def test_dry_run_with_adopt_makes_no_call_and_marks_it_unchecked(source_dir, tmp_path):
+    _, _, rep = run_phases(source_dir, tmp_path, None, ["core", "model"], dry_run=True, core_ids="any",
+                           adopt={"Q101": "Q1", "P100": "P1"})
+    assert any("adopt Q101 -> Q1" in c and "not checked" in c for c in rep.calls)
+    assert not (tmp_path / "idmap-test.csv").exists()
+
+
+def test_dry_run_predicts_ids_after_the_adopted_ones(source_dir, tmp_path):
+    _, _, rep = run_phases(source_dir, tmp_path, None, ["core", "model"], dry_run=True, core_ids="any",
+                           adopt={"Q101": "Q1", "P100": "P1"})
+    calls = "\n".join(rep.calls)
+    assert "new=item -> Q2 (predicted) from Q1 'Class'" in calls       # Q1 is taken by the adopted Q101
+    assert "new=property -> P2 (predicted) from P1 " in calls          # P1 is taken by the adopted P100
+    assert "-> Q1 (predicted)" not in calls and "-> P1 (predicted)" not in calls
+
+
+def test_inventory_lists_items_and_properties_with_labels():
+    fake = existing_target()
+    rows = push.inventory(fake)
+    assert [r["id"] for r in rows] == ["P1", "P2", "Q1"]
+    by_id = {r["id"]: r for r in rows}
+    assert by_id["Q1"]["label_en"] == "Chublet" and by_id["Q1"]["type"] == "item"
+    assert by_id["P1"]["datatype"] == "wikibase-item" and by_id["P2"]["label_en"] == "subclass of"
+    assert fake.writes == 0
+
+
+def test_core_ids_must_be_same_or_any():
+    with pytest.raises(ValueError):
+        push.Settings(core_ids="whatever")

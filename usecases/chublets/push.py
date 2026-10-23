@@ -102,10 +102,13 @@ class Settings:
     values: str = "federated"          # federated | local
     url_as_string: bool = True
     throttle: float = 0.0
+    core_ids: str = "same"             # same: Q1..Q3, P1..P10 must keep their ids | any: ids of the target
 
     def __post_init__(self) -> None:
         if self.values not in {"federated", "local"}:
             raise ValueError("values must be 'federated' or 'local'")
+        if self.core_ids not in {"same", "any"}:
+            raise ValueError("core_ids must be 'same' or 'any'")
 
 
 # --------------------------------------------------------------------------- state files
@@ -358,6 +361,52 @@ def label_en(src: dict[str, Any]) -> str:
     return (labels.get("en") or next(iter(labels.values()), {"value": ""}))["value"]
 
 
+def load_adopt(path: Path | None) -> dict[str, str]:
+    """``adopt-<target>.csv``: source_id,target_id. Entities that already exist on the target."""
+    out: dict[str, str] = {}
+    if path is None or not path.is_file():
+        return out
+    with path.open(encoding="utf-8", newline="") as fh:
+        for row in csv.DictReader(fh):
+            sid, tid = (row.get("source_id") or "").strip(), (row.get("target_id") or "").strip()
+            if not sid or sid.startswith("#"):
+                continue
+            if not (ID_RE.match(sid) and ID_RE.match(tid)) or sid[0] != tid[0]:
+                raise PushAbort(f"adopt file: {sid!r} -> {tid!r} is not a pair of the same kind (Q/P)")
+            out[sid] = tid
+    return out
+
+
+def inventory(client: Any) -> list[dict[str, Any]]:
+    """Read only: every item and property of the target with labels, for choosing what to adopt."""
+    namespaces = client.entity_namespaces()
+    ids: list[str] = []
+    for model in ("wikibase-item", "wikibase-property"):
+        if model not in namespaces:
+            continue
+        for title in client.list_titles(namespaces[model]):
+            m = re.search(r"([QP]\d+)$", title)
+            if m:
+                ids.append(m.group(1))
+    ids = sorted(set(ids), key=_sort_key)
+    rows: list[dict[str, Any]] = []
+    for eid, ent in client.get_entities(ids).items():
+        if ent is None:
+            continue
+        labels = ent.get("labels", {})
+        descs = ent.get("descriptions", {})
+        rows.append({
+            "id": eid,
+            "type": "property" if eid.startswith("P") else "item",
+            "datatype": ent.get("datatype", ""),
+            "label_en": labels.get("en", {}).get("value", ""),
+            "label_de": labels.get("de", {}).get("value", ""),
+            "description_en": descs.get("en", {}).get("value", ""),
+            "claims": sum(len(v) for v in ent.get("claims", {}).values()),
+        })
+    return sorted(rows, key=lambda r: _sort_key(r["id"]))
+
+
 class Pusher:
     def __init__(
         self,
@@ -378,19 +427,53 @@ class Pusher:
         self.settings = settings
         self.dry_run = dry_run
         self.report = Report()
-        self._predicted = {"Q": idmap.max_numeric("Q"), "P": idmap.max_numeric("P")}
+
+    # -- adoption ----------------------------------------------------------------
+    def adopt_existing(self, adopt: dict[str, str]) -> None:
+        """Map source entities onto entities that already exist on the target.
+
+        Checked in a real run: the target must hold the entity, its English label must equal the
+        CSV label (ignoring case) and, for properties, the datatype must be the one we would create.
+        """
+        todo = {sid: tid for sid, tid in adopt.items() if sid in self.source.entities}
+        remote = {} if self.dry_run or not todo else self.client.get_entities(sorted(set(todo.values())))
+        for sid, tid in sorted(todo.items(), key=lambda kv: _sort_key(kv[0])):
+            if sid in self.idmap.map:
+                if self.idmap.map[sid] != tid:
+                    raise PushAbort(f"adopt: {sid} is already mapped to {self.idmap.map[sid]}, not {tid}")
+                continue
+            src = self.source.entities[sid]
+            label = label_en(src)
+            if self.dry_run:
+                self.idmap.map[sid] = tid
+                self.report.calls.append(f"adopt {sid} -> {tid} {label!r} (not checked in a dry run)")
+                self.report.adopted.append(sid)
+                continue
+            ent = remote.get(tid)
+            if ent is None:
+                raise PushAbort(f"adopt: {tid} does not exist on the target (for {sid} {label!r})")
+            theirs = ent.get("labels", {}).get("en", {}).get("value", "")
+            if theirs.strip().lower() != label.strip().lower():
+                raise PushAbort(f"adopt: {tid} holds {theirs!r}, the CSV {sid} is {label!r}")
+            if src["type"] == "property":
+                want = entity_payload(src, self.settings)["datatype"]
+                if ent.get("datatype") != want:
+                    raise PushAbort(f"adopt: {tid} has datatype {ent.get('datatype')!r}, {sid} would be {want!r}")
+            self.idmap.add(sid, tid, label)
+            self.report.adopted.append(sid)
 
     # -- pass 1 ----------------------------------------------------------------
     def create_entities(self, ids: list[str]) -> None:
         for eid in ids:
             src = self.source.entities[eid]
             if eid in self.idmap.map:
-                self.report.skipped.append(eid)
+                if eid not in self.report.adopted:
+                    self.report.skipped.append(eid)
                 continue
             payload = entity_payload(src, self.settings)
             new = src["type"]
             label = label_en(src)
-            if eid in CORE_IDS:
+            if eid in CORE_IDS and self.settings.core_ids == "same":
                 self._create_core(eid, src, payload, new, label)
             else:
                 self._create(eid, payload, new, label)
@@ -412,8 +495,8 @@ class Pusher:
     def _create(self, eid: str, payload: dict, new: str, label: str) -> str | None:
         letter = "Q" if new == "item" else "P"
         if self.dry_run:
-            self._predicted[letter] += 1
-            predicted = f"{letter}{self._predicted[letter]}"
+            # the next id after the highest one known (adopted or predicted earlier); the real target decides
+            predicted = f"{letter}{self.idmap.max_numeric(letter) + 1}"
             self.idmap.map[eid] = predicted           # in memory only, not written
             self.report.created.append(eid)
             self.report.calls.append(f"wbeditentity new={new} -> {predicted} (predicted) from {eid} {label!r}"
@@ -422,7 +505,7 @@ class Pusher:
         try:
             result = self.client.edit_entity(payload, new=new, summary=SUMMARY)
         except Exception as exc:                      # noqa: BLE001 - reported, the run goes on
-            if eid in CORE_IDS:
+            if eid in CORE_IDS and self.settings.core_ids == "same":
                 raise PushAbort(f"creating core entity {eid} failed: {exc}") from exc
             self.report.failed_entities.append(f"{eid}: {exc}")
             return None
@@ -504,7 +587,8 @@ class Pusher:
         time.sleep(self.settings.throttle)
 
     # -- all -------------------------------------------------------------------
-    def run(self, ids: list[str]) -> Report:
+    def run(self, ids: list[str], adopt: dict[str, str] | None = None) -> Report:
+        self.adopt_existing(adopt or {})
         self.create_entities(ids)
         self.write_claims(ids)
         if not self.dry_run:

@@ -13,6 +13,7 @@ Settings (``[chublets]`` in config.ini): source_dir, target, values, url_as_stri
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import logging
 import os
@@ -42,8 +43,8 @@ def _client(cp) -> WikibaseClient:
     )
 
 
-def probe(client: WikibaseClient, source: push.Source) -> int:
-    """Read only: what the target is, and whether the core ids are free (or already the right ones)."""
+def probe(client: WikibaseClient, source: push.Source, settings: push.Settings, adopt: dict[str, str]) -> int:
+    """Read only: what the target is, what holds the core ids, and whether the adopt file is right."""
     client.login()
     info = client.siteinfo()
     print(f"target: {info['sitename']!r}  {info['generator']}")
@@ -61,8 +62,44 @@ def probe(client: WikibaseClient, source: push.Source) -> int:
             same = have == want
             clean &= same
             print(f"  {eid:<4} holds {have!r}  ({'same as the CSV' if same else 'DIFFERENT from the CSV: ' + repr(want)})")
-    print("core ids: " + ("free or already right" if clean else "NOT usable, the push would stop"))
-    return 0 if clean else 1
+    if settings.core_ids == "same":
+        print("core ids: " + ("free or already right" if clean else "NOT usable, the push would stop"))
+        ok = clean
+    else:
+        print("core_ids = any: the core ids of the target do not have to match the CSV")
+        ok = True
+    if adopt:
+        targets = client.get_entities(sorted(set(adopt.values())))
+        print(f"adopt file: {len(adopt)} pairs")
+        for sid, tid in sorted(adopt.items(), key=lambda kv: push._sort_key(kv[0])):
+            ent = targets.get(tid)
+            want = push.label_en(source.entities[sid]) if sid in source.entities else "?"
+            have = (ent or {}).get("labels", {}).get("en", {}).get("value")
+            good = ent is not None and (have or "").strip().lower() == want.strip().lower()
+            ok &= good
+            print(f"  {sid:<5} -> {tid:<5} {'OK ' if good else 'MISMATCH '}CSV {want!r}, target {have!r}")
+    return 0 if ok else 1
+
+
+def show_inventory(client: WikibaseClient, target: str) -> int:
+    """Read only: list every item and property of the target and write them to report/."""
+    client.login()
+    rows = push.inventory(client)
+    print(f"{len(rows)} entities on the target")
+    for r in rows[:200]:
+        extra = f"  [{r['datatype']}]" if r["datatype"] else ""
+        print(f"  {r['id']:<6} {r['label_en']!r}{extra}  {r['claims']} claims")
+    if len(rows) > 200:
+        print(f"  ... {len(rows) - 200} more (see the file)")
+    report_dir = HERE / "report"
+    report_dir.mkdir(exist_ok=True)
+    path = report_dir / f"inventory-{target}.csv"
+    with path.open("w", encoding="utf-8", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=list(rows[0]) if rows else ["id"], lineterminator="\n")
+        w.writeheader()
+        w.writerows(rows)
+    print(f"inventory: {path}")
+    return 0
 
 
 def run(
@@ -73,6 +110,7 @@ def run(
     phases: set[str] | None = None,
     origins: set[str] | None = None,
     do_probe: bool = False,
+    do_inventory: bool = False,
 ) -> int:
     try:
         path, _ = resolve_config_path(config_path)
@@ -90,7 +128,9 @@ def run(
         values=section.get("values", "federated").strip(),
         url_as_string=str(section.get("url_as_string", "true")).strip().lower() in {"1", "true", "yes"},
         throttle=cp.getfloat("import", "throttle_seconds", fallback=0.0),
+        core_ids=str(section.get("core_ids", "same")).strip(),
     )
+    adopt = push.load_adopt(HERE / f"adopt-{target}.csv")
     allow_write = str(section.get("allow_write", "false")).strip().lower() in {"1", "true", "yes"}
     if not dry_run and not section.get("target", "").strip():
         print("[chublets] target is empty: name the target explicitly (e.g. chublets-wikibase.de) before writing; "
@@ -106,14 +146,16 @@ def run(
         print(f"abort: {exc}")
         return 2
 
+    if do_inventory:
+        return show_inventory(_client(cp), target)
     if do_probe:
-        return probe(_client(cp), source)
+        return probe(_client(cp), source, settings, adopt)
 
     phases = phases or {"core", "model"}
     ids = push.select(source, phases, values=settings.values, origins=origins, limit=limit)
     print(f"source: {source_dir}  ({len(source.entities)} entities)")
     print(f"target: {target}  phases: {', '.join(p for p in push.PHASES if p in phases)}  "
-          f"values={settings.values}  url_as_string={settings.url_as_string}  "
+          f"values={settings.values}  url_as_string={settings.url_as_string}  core_ids={settings.core_ids}  "
           f"{'DRY RUN' if dry_run else 'WRITE'}")
     print(f"selected: {len(ids)} entities")
 
@@ -126,7 +168,7 @@ def run(
         client.login()
     pusher = push.Pusher(source, client, idmap, state, settings, dry_run=dry_run)
     try:
-        report = pusher.run(ids)
+        report = pusher.run(ids, adopt)
     except push.PushAbort as exc:
         print(f"ABORT: {exc}")
         return 3
@@ -156,6 +198,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--config", type=Path, default=None)
     ap.add_argument("--write", action="store_true", help="really write (default: dry run)")
     ap.add_argument("--probe", action="store_true", help="read only: login, siteinfo, are the core ids free?")
+    ap.add_argument("--inventory", action="store_true", help="read only: list the items and properties of the target")
     ap.add_argument("--phase", default="core,model", help="comma list of core, model, items (default core,model)")
     ap.add_argument("--origin", default="", help="items only: comma list of origins, e.g. open-archaeo,wikidata")
     ap.add_argument("--limit", type=int, default=None, help="items only: the first N items")
@@ -168,7 +211,7 @@ def main(argv: list[str] | None = None) -> int:
         ap.error(f"unknown phase: {', '.join(sorted(bad))}")
     origins = {o.strip() for o in args.origin.split(",") if o.strip()} or None
     return run(config_path=args.config, dry_run=not args.write, limit=args.limit,
-               phases=phases, origins=origins, do_probe=args.probe)
+               phases=phases, origins=origins, do_probe=args.probe, do_inventory=args.inventory)
 
 
 if __name__ == "__main__":

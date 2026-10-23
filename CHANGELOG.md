@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.1
+- Chublets use case: `--inventory` (read only list of the target), `adopt-<target>.csv` (map CSV entities
+  onto entities that already exist on the target, checked by label and datatype before any write) and
+  `core_ids = any` (the core no longer has to get the ids of the CSV). `--probe` checks the adopt file.
+- `WikibaseClient`: new `entity_namespaces` and `list_titles`.
+- Tests: 10 more in `tests/test_chublets_push.py` (26 there, 65 in the repository).
+
 ## 1.2.0
 - New use case `usecases/chublets/` (S7g of wikibase-static): pushes the CSV model of
   `chublets-wikibase-demo` into a real Wikibase with `wbeditentity`. Phases `core`, `model`, `items`;

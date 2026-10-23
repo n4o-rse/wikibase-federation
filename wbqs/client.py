@@ -18,7 +18,7 @@ except Exception:  # pragma: no cover - extremely unlikely
 
 from .parser import Statement
 
-__version__ = "1.2.0"
+__version__ = "1.2.1"
 
 DEFAULT_USER_AGENT = (
     f"wikibase-qs-api-importer/{__version__} "
@@ -326,6 +326,28 @@ class WikibaseClient:
             "sitename": result.get("general", {}).get("sitename", ""),
             "extensions": sorted(e.get("name", "") for e in result.get("extensions", [])),
         }
+
+    def entity_namespaces(self) -> dict[str, int]:
+        """Namespace ids of items and properties on this wiki (they differ between installations)."""
+        result = self._get({"action": "query", "meta": "siteinfo", "siprop": "namespaces"})["query"]
+        out: dict[str, int] = {}
+        for ns in result.get("namespaces", {}).values():
+            model = ns.get("defaultcontentmodel")
+            if model in {"wikibase-item", "wikibase-property"}:
+                out[model] = int(ns["id"])
+        return out
+
+    def list_titles(self, namespace: int) -> list[str]:
+        """All page titles of one namespace (allpages, with continuation)."""
+        titles: list[str] = []
+        cont: dict[str, Any] = {}
+        while True:
+            result = self._get({"action": "query", "list": "allpages", "apnamespace": namespace,
+                                "aplimit": "500", **cont})
+            titles += [p["title"] for p in result.get("query", {}).get("allpages", [])]
+            cont = result.get("continue") or {}
+            if not cont:
+                return titles
 
     def get_entities(self, ids: list[str]) -> dict[str, dict[str, Any] | None]:
         """Read up to 50 entities per request; an id that does not exist maps to None."""
