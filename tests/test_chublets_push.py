@@ -458,3 +458,23 @@ def test_inventory_lists_items_and_properties_with_labels():
 def test_core_ids_must_be_same_or_any():
     with pytest.raises(ValueError):
         push.Settings(core_ids="whatever")
+
+
+def test_a_federated_claim_in_the_form_chublets_wikibase_de_stores_it_counts_as_present():
+    """Read from the real target (Q1, 2026-10-23): item value id is the full Wikidata URI, with hash and claim id."""
+    remote = {
+        "mainsnak": {"snaktype": "value", "property": "P1", "hash": "dd5d477b1a368725b08cdbd17e6341be6d009a3d",
+                     "datavalue": {"value": {"entity-type": "item", "id": "http://www.wikidata.org/entity/Q166142"},
+                                   "type": "wikibase-entityid"}, "datatype": "wikibase-item"},
+        "type": "statement", "id": "Q1$2707b53f-4098-104c-f5d4-29f3099f245a", "rank": "normal",
+    }
+    ours = {
+        "type": "statement", "rank": "normal",
+        "mainsnak": {"snaktype": "value", "property": "P1",
+                     "datavalue": {"type": "wikibase-entityid",
+                                   "value": {"entity-type": "item", "id": push.WD + "Q166142"}}},
+    }
+    assert push.canonical_claim(remote) == push.canonical_claim(ours)
+    other = json.loads(json.dumps(ours))
+    other["mainsnak"]["datavalue"]["value"]["id"] = push.WD + "Q5"
+    assert push.canonical_claim(remote) != push.canonical_claim(other)
