@@ -1,0 +1,179 @@
+source_id,target_id,label_en
+P1,P2,subclass of
+P2,P1,instance of
+P3,P3,subproperty of
+P4,P4,Wikidata equivalent
+P5,P5,formatter URL
+P6,P6,reference URL
+P7,P7,retrieved
+P8,P8,stated in
+P9,P9,domain
+P10,P10,range
+P100,P11,close match Wikidata property
+P101,P12,equivalent CodeMeta term
+P102,P13,equivalent schema.org term
+P103,P14,application category
+P104,P15,archive date
+P105,P16,archive URL
+P106,P17,collection
+P107,P18,copyright license
+P108,P19,CRAN project
+P109,P20,depends on software
+P110,P21,described at URL
+P111,P22,described by source
+P112,P23,description
+P113,P24,developer
+P114,P25,DOI
+P115,P26,exact match
+P116,P27,inventory number
+P117,P28,main subject
+P118,P29,maintained by WikiProject
+P119,P30,name
+P120,P31,official website
+P121,P32,open-archaeo ID
+P122,P33,part of
+P123,P34,programmed in
+P124,P35,PyPI project
+P125,P36,source code repository URL
+P126,P37,version control system
+P127,P38,Wikidata item
+P128,P39,application sub category
+P129,P40,application suite
+P130,P41,based on
+P131,P42,contributor to the creative work or subject
+P132,P43,development status
+P133,P44,download URL
+P134,P45,funder
+P135,P46,GitHub account
+P136,P47,has part(s)
+P137,P48,inception
+P138,P49,issue tracker URL
+P139,P50,last update
+P140,P51,maintained by
+P141,P52,official demo URL
+P142,P53,operating system
+P143,P54,platform
+P144,P55,publication date
+P145,P56,readable file format
+P146,P57,series ordinal
+P147,P58,SoftWare Hash IDentifier
+P148,P59,software version identifier
+P149,P60,supporting data
+P150,P61,target product
+P151,P62,user manual URL
+P152,P63,version
+P153,P64,version type
+P154,P65,writable file format
+P155,P66,address
+P156,P67,affiliation
+P157,P68,archives at
+P158,P69,available on device
+P159,P70,award received
+P160,P71,binding of software library
+P161,P72,build instructions
+P162,P73,cites work
+P163,P74,code sample type
+P164,P75,computes solution to
+P165,P76,cont integration
+P166,P77,continuous integration
+P167,P78,copyright holder
+P168,P79,copyright year
+P169,P80,countries not supported
+P170,P81,countries supported
+P171,P82,creator
+P172,P83,data size
+Q1,Q2,Class
+Q2,Q3,Property
+Q3,Q4,Instance
+Q100,Q5,software
+Q101,Q6,research software
+Q102,Q7,application software
+Q103,Q8,software library
+Q104,Q9,script file
+Q105,Q10,Little Minion
+Q106,Q1,chublet
+P173,P84,distribution format
+P174,P85,DistroWatch ID
+P175,P86,Google Play Store app ID
+P176,P87,Debian stable package
+P177,P88,Arch Linux package
+P178,P89,Fedora package
+P179,P90,Ubuntu package
+P180,P91,Gentoo package
+P181,P92,F-Droid package
+P182,P93,"version, edition or translation of"
+P183,P94,editor
+P184,P95,email address
+P185,P96,embargo date
+P186,P97,embargo end date
+P187,P98,encoding
+P188,P99,end date
+P189,P100,end time
+P190,P101,facet of
+P191,P102,family name
+P192,P103,feature list
+P193,P104,field of work
+P194,P105,file format
+P195,P106,followed by
+P196,P107,follows
+P197,P108,Framalibre ID
+P198,P109,Free Software Directory entry
+P199,P110,funding
+P200,P111,given name
+P201,P112,GUI toolkit or framework
+P202,P113,has characteristic
+P203,P114,has source code
+P204,P115,image
+P205,P116,influenced by
+P206,P117,input device
+P207,P118,install URL
+P208,P119,IRC channel URL
+P209,P120,is accessible for free
+P210,P121,is source code of
+P211,P122,logo image
+P212,P123,media type
+P213,P124,member of
+P214,P125,memory requirements
+P215,P126,notable work
+P216,P127,official blog URL
+P217,P128,Open Hub ID
+P218,P129,output device
+P219,P130,package management system
+P220,P131,part of the series
+P221,P132,permissions
+P222,P133,person identifier
+P223,P134,point in time
+P224,P135,port
+P225,P136,position
+P226,P137,price
+P227,P138,processor requirements
+P228,P139,producer
+P229,P140,provider
+P230,P141,publisher
+P231,P142,readme
+P232,P143,release notes
+P233,P144,review
+P234,P145,review aspect
+P235,P146,review body
+P236,P147,role name
+P237,P148,software add on
+P238,P149,software engine
+P239,P150,software quality assurance
+P240,P151,software suggestions
+P241,P152,SourceForge project
+P242,P153,sponsor
+P243,P154,start date
+P244,P155,start time
+P245,P156,storage requirements
+P246,P157,swMATH work ID
+P247,P158,title
+P248,P159,web interface software
+P249,P160,digital rights management system
+P250,P161,ISO standard
+P251,P162,language of work or name
+P252,P163,movement
+P253,P164,removed feature
+P254,P165,RfC ID
+P255,P166,Stack Exchange tag
+P256,P167,TeX string
+P257,P168,Unicode character
