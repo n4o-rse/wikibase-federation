@@ -89,3 +89,11 @@ Later steps:
 - A crash between creating an entity and writing its idmap line would leave an entity the idmap does not
   know. The idmap is written line by line right after each creation to keep that window small.
 - Quantities with a unit and entities of another kind of reference are deferred, not translated.
+
+## Rate limit
+
+Accounts without the bot right may only edit a limited number of times in a short period. The first run on
+`chublets-wikibase.de` created 90 entities and was then refused. Since 1.2.2 the push waits
+(`rate_limit_wait`, default 60 s) and retries up to `rate_limit_retries` times (default 5), then stops. Everything
+done is already in `idmap-<target>.csv` and `state-<target>.json`: run the same command again. A durable cure is
+the `bot` group for the push account (Special:UserRights on the target wiki) and `mark_bot = true`.

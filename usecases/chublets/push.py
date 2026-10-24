@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
 import re
 import time
 from dataclasses import dataclass, field
@@ -36,6 +37,19 @@ CORE_IDS = CORE_ITEMS + CORE_PROPERTIES
 PHASES = ("core", "model", "items")
 ID_RE = re.compile(r"^([QP])(\d+)$")
 SUMMARY = "chublets push (wikibase-federation, S7g)"
+
+
+log = logging.getLogger(__name__)
+
+RATE_LIMIT = re.compile(
+    r"ratelimit|rate.?limit|too many|anti-?abuse|anti-missbrauch|zeitabstand|exceeded|überschritten",
+    re.IGNORECASE,
+)
+
+
+def is_rate_limit(exc: Exception) -> bool:
+    """True when the wiki refused an edit only because there were too many in a short time."""
+    return getattr(exc, "code", "") == "ratelimited" or bool(RATE_LIMIT.search(str(exc)))
 
 
 class PushAbort(RuntimeError):
@@ -103,6 +117,8 @@ class Settings:
     url_as_string: bool = True
     throttle: float = 0.0
     core_ids: str = "same"             # same: Q1..Q3, P1..P10 must keep their ids | any: ids of the target
+    rate_limit_wait: float = 60.0      # seconds to wait when the wiki says "too many edits"
+    rate_limit_retries: int = 5        # then the run stops (nothing is lost, run it again later)
 
     def __post_init__(self) -> None:
         if self.values not in {"federated", "local"}:
@@ -478,6 +494,25 @@ class Pusher:
             else:
                 self._create(eid, payload, new, label)
 
+    def _edit(self, data: dict, **kw: Any) -> dict:
+        """``edit_entity`` that waits and retries when the wiki rate-limits the account."""
+        for attempt in range(self.settings.rate_limit_retries + 1):
+            try:
+                return self.client.edit_entity(data, **kw)
+            except Exception as exc:                  # noqa: BLE001
+                if not is_rate_limit(exc):
+                    raise
+                if attempt == self.settings.rate_limit_retries:
+                    raise PushAbort(
+                        "the wiki rate-limits this account; stopped after "
+                        f"{self.settings.rate_limit_retries} waits. What is done is saved: run the same command again "
+                        "later (or give the bot account the 'bot' group in Special:UserRights)."
+                    ) from exc
+                log.warning("Rate limit hit; waiting %ss (%s/%s).", self.settings.rate_limit_wait,
+                            attempt + 1, self.settings.rate_limit_retries)
+                time.sleep(self.settings.rate_limit_wait)
+        raise AssertionError("unreachable")
+
     def _create_core(self, eid: str, src: dict, payload: dict, new: str, label: str) -> None:
         if not self.dry_run:
             existing = self.client.get_entities([eid])[eid]
@@ -503,7 +538,9 @@ class Pusher:
                                      + (f" datatype={payload['datatype']}" if new == "property" else ""))
             return predicted
         try:
-            result = self.client.edit_entity(payload, new=new, summary=SUMMARY)
+            result = self._edit(payload, new=new, summary=SUMMARY)
+        except PushAbort:
+            raise
         except Exception as exc:                      # noqa: BLE001 - reported, the run goes on
             if eid in CORE_IDS and self.settings.core_ids == "same":
                 raise PushAbort(f"creating core entity {eid} failed: {exc}") from exc
@@ -569,7 +606,9 @@ class Pusher:
 
     def _send_claims(self, eid: str, target: str, new_claims: list[tuple[str, dict[str, Any]]]) -> None:
         try:
-            result = self.client.edit_entity({"claims": [c for _, c in new_claims]}, entity_id=target, summary=SUMMARY)
+            result = self._edit({"claims": [c for _, c in new_claims]}, entity_id=target, summary=SUMMARY)
+        except PushAbort:
+            raise
         except Exception as exc:                      # noqa: BLE001
             for sid, _ in new_claims:
                 self.report.claims_failed.append({"entity": eid, "claim": sid, "reason": str(exc)})

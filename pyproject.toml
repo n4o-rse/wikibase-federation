@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wikibase-qs-api-importer"
-version = "1.2.1"
+version = "1.2.2"
 description = "Import QuickStatements-like item triples into a Wikibase via the API, including federated Wikidata properties and item values."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -35,3 +35,6 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.ruff.lint.per-file-ignores]
 # Use-case scripts bootstrap sys.path before importing model / wbqs.
 "usecases/**/*.py" = ["E402", "I001"]
+# The chublets push keeps long, readable lines (messages, test fixtures).
+"usecases/chublets/*.py" = ["E402", "I001", "E501"]
+"tests/test_chublets_push.py" = ["E501"]

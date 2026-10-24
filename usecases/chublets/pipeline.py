@@ -127,8 +127,10 @@ def run(
     settings = push.Settings(
         values=section.get("values", "federated").strip(),
         url_as_string=str(section.get("url_as_string", "true")).strip().lower() in {"1", "true", "yes"},
-        throttle=cp.getfloat("import", "throttle_seconds", fallback=0.0),
+        throttle=cp.getfloat("import", "throttle_seconds", fallback=1.0),
         core_ids=str(section.get("core_ids", "same")).strip(),
+        rate_limit_wait=float(section.get("rate_limit_wait", 60)),
+        rate_limit_retries=int(section.get("rate_limit_retries", 5)),
     )
     adopt = push.load_adopt(HERE / f"adopt-{target}.csv")
     allow_write = str(section.get("allow_write", "false")).strip().lower() in {"1", "true", "yes"}
@@ -171,6 +173,9 @@ def run(
         report = pusher.run(ids, adopt)
     except push.PushAbort as exc:
         print(f"ABORT: {exc}")
+        done = pusher.report.as_dict()
+        print(f"saved so far: {done['entities']['created']} created, {done['claims']['written']} claims, "
+              f"{done['write_calls']} write calls (idmap and state files are up to date)")
         return 3
 
     out = report.as_dict()

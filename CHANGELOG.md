@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.2
+- Chublets push: when the wiki rate-limits the account ("Anti-Missbrauchs-Maßnahme", `ratelimited`) the push
+  waits `rate_limit_wait` seconds and retries (`rate_limit_retries` times), then stops with a clear message;
+  idmap and state are already saved, a rerun continues. `throttle_seconds` defaults to 1 for this use case.
+  The first real run created 90 entities before the limit hit.
+- Lint: `E501` is ignored for the chublets files (long messages and fixtures).
+- Tests: 3 more (69 in the repository).
+
 ## 1.2.1
 - Chublets use case: `--inventory` (read only list of the target), `adopt-<target>.csv` (map CSV entities
   onto entities that already exist on the target, checked by label and datatype before any write) and

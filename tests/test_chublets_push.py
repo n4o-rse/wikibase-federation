@@ -29,6 +29,8 @@ class FakeWikibase:
         self.throttle = 0.0
         self.calls: list[tuple] = []
         self.fail_labels: set[str] = set()
+        self.limit_next = 0                      # the next N edit calls are refused as "too many edits"
+        self.limit_after: int | None = None      # after N successful edits every edit is refused
         self.property_datatypes: dict[str, str] = {}
         for eid, spec in (preset or {}).items():
             label, datatype = spec if isinstance(spec, tuple) else (spec, None)
@@ -45,6 +47,10 @@ class FakeWikibase:
         return {i: self.entities.get(i) for i in ids}
 
     def edit_entity(self, data, *, entity_id=None, new=None, summary=None):
+        if self.limit_next > 0 or (self.limit_after is not None and self.writes >= self.limit_after):
+            self.limit_next = max(0, self.limit_next - 1)
+            raise RuntimeError("API error [no-automatic-entity-id]: Cannot automatically assign ID: Im Rahmen einer "
+                               "Anti-Missbrauchs-Maßnahme kann diese Aktion nur begrenzt oft ausgeführt werden.")
         self.calls.append(("edit", entity_id, new, data))
         if new:
             label = data.get("labels", {}).get("en", {}).get("value", "")
@@ -177,11 +183,13 @@ def source_dir(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def make(source_dir: Path, tmp_path: Path, client, *, dry_run=False, values="federated", url_as_string=True, core_ids="same"):
+def make(source_dir: Path, tmp_path: Path, client, *, dry_run=False, values="federated", url_as_string=True,
+         core_ids="same"):
     src = push.load_source(source_dir)
     idmap = push.IdMap(tmp_path / "idmap-test.csv")
     state = push.ClaimState(tmp_path / "state-test.json")
-    settings = push.Settings(values=values, url_as_string=url_as_string, core_ids=core_ids)
+    settings = push.Settings(values=values, url_as_string=url_as_string, core_ids=core_ids,
+                             rate_limit_wait=0.0, rate_limit_retries=3)
     return src, push.Pusher(src, client, idmap, state, settings, dry_run=dry_run)
 
 
@@ -478,3 +486,32 @@ def test_a_federated_claim_in_the_form_chublets_wikibase_de_stores_it_counts_as_
     other = json.loads(json.dumps(ours))
     other["mainsnak"]["datavalue"]["value"]["id"] = push.WD + "Q5"
     assert push.canonical_claim(remote) != push.canonical_claim(other)
+
+
+def test_rate_limit_is_waited_out_and_nothing_fails(source_dir, tmp_path):
+    fake = FakeWikibase()
+    fake.limit_next = 3                                   # within the 3 retries of one call
+    _, _, rep = run_phases(source_dir, tmp_path, fake, ["core", "model"])
+    assert not rep.failed_entities and not rep.claims_failed
+    assert len(rep.created) == 13 + 2 + 2
+
+
+def test_a_lasting_rate_limit_aborts_keeps_the_progress_and_a_rerun_finishes(source_dir, tmp_path):
+    fake = FakeWikibase()
+    fake.limit_after = 5
+    with pytest.raises(push.PushAbort, match="rate-limits"):
+        run_phases(source_dir, tmp_path, fake, ["core", "model"])
+    assert fake.writes == 5
+    saved = push.IdMap(tmp_path / "idmap-test.csv").map
+    assert len(saved) == 5                                # what was created is on disk
+    fake.limit_after = None
+    _, _, rep = run_phases(source_dir, tmp_path, fake, ["core", "model"])
+    assert not rep.failed_entities
+    assert len(fake.entities) == 17                       # no duplicates: 13 core + 4 model
+    assert len(push.IdMap(tmp_path / "idmap-test.csv").map) == 17
+
+
+def test_only_rate_limit_messages_are_retried():
+    assert push.is_rate_limit(RuntimeError("API error [ratelimited]: You've exceeded your rate limit"))
+    assert push.is_rate_limit(RuntimeError("Im Rahmen einer Anti-Missbrauchs-Maßnahme"))
+    assert not push.is_rate_limit(RuntimeError("modification-failed: label conflict"))
