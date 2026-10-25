@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wikibase-qs-api-importer"
-version = "1.2.2"
+version = "1.2.3"
 description = "Import QuickStatements-like item triples into a Wikibase via the API, including federated Wikidata properties and item values."
 readme = "README.md"
 requires-python = ">=3.9"

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.3
+- Chublets push: Wikibase allows at most 250 characters in a label, description or alias. Longer texts are cut at a
+  word boundary and end with an ellipsis (`shorten`); the report lists them under `shortened`, the source
+  stays whole. The first batch of items had three descriptions that the wiki refused (Q150, Q281, Q289 of the CSV);
+  22 of the 796 open-archaeo items are affected.
+- Tests: 2 more (71 in the repository); the fake wiki refuses texts over 250 characters.
+
 ## 1.2.2
 - Chublets push: when the wiki rate-limits the account ("Anti-Missbrauchs-Maßnahme", `ratelimited`) the push
   waits `rate_limit_wait` seconds and retries (`rate_limit_retries` times), then stops with a clear message;

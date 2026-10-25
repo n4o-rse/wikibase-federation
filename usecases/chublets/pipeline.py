@@ -188,6 +188,8 @@ def run(
         print(f"  deferred {d['entity']} {d['claim']}: {d['reason']}")
     if len(report.claims_deferred) > 10:
         print(f"  ... {len(report.claims_deferred) - 10} more deferred (see the report)")
+    if report.shortened:
+        print(f"  shortened to 250 characters: {len(report.shortened)} (see the report)")
     for f in report.failed_entities[:10]:
         print(f"  FAILED {f}")
     report_dir = HERE / "report"

@@ -9,7 +9,7 @@ from .parser import (
     parse_value,
 )
 
-__version__ = "1.2.2"
+__version__ = "1.2.3"
 
 __all__ = [
     "ParseError",

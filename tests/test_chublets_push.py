@@ -51,6 +51,10 @@ class FakeWikibase:
             self.limit_next = max(0, self.limit_next - 1)
             raise RuntimeError("API error [no-automatic-entity-id]: Cannot automatically assign ID: Im Rahmen einer "
                                "Anti-Missbrauchs-Maßnahme kann diese Aktion nur begrenzt oft ausgeführt werden.")
+        for key in ("labels", "descriptions"):
+            for v in data.get(key, {}).values():
+                if len(v["value"]) > 250:
+                    raise RuntimeError(f"modification-failed: {key[:-1]} must be no more than 250 characters long")
         self.calls.append(("edit", entity_id, new, data))
         if new:
             label = data.get("labels", {}).get("en", {}).get("value", "")
@@ -59,7 +63,7 @@ class FakeWikibase:
             letter = "Q" if new == "item" else "P"
             self.counter[letter] += 1
             eid = f"{letter}{self.counter[letter]}"
-            ent = {"id": eid, "labels": data.get("labels", {}), "claims": {}}
+            ent = {"id": eid, "labels": data.get("labels", {}), "descriptions": data.get("descriptions", {}), "claims": {}}
             if new == "property":
                 ent["datatype"] = data["datatype"]
                 self.property_datatypes[eid] = data["datatype"]
@@ -515,3 +519,28 @@ def test_only_rate_limit_messages_are_retried():
     assert push.is_rate_limit(RuntimeError("API error [ratelimited]: You've exceeded your rate limit"))
     assert push.is_rate_limit(RuntimeError("Im Rahmen einer Anti-Missbrauchs-Maßnahme"))
     assert not push.is_rate_limit(RuntimeError("modification-failed: label conflict"))
+
+
+def test_shorten_cuts_at_a_word_and_ends_with_an_ellipsis():
+    assert push.shorten("short text") == "short text"
+    long = ("word " * 100).strip()
+    out = push.shorten(long)
+    assert len(out) <= 250 and out.endswith("\u2026") and not out.endswith(" \u2026")
+    assert out[:-1].split(" ")[-1] == "word"                       # no half word
+    no_space = "x" * 400
+    assert len(push.shorten(no_space)) == 250 and push.shorten(no_space).endswith("\u2026")
+    assert len(push.shorten("y" * 250)) == 250 and push.shorten("y" * 250) == "y" * 250
+
+
+def test_a_description_over_250_characters_is_shortened_and_reported(source_dir, tmp_path):
+    fake = FakeWikibase()
+    src, pusher = make(source_dir, tmp_path, fake)
+    ids = push.select(src, {"core", "model"}, values="federated")
+    victim = next(i for i in ids if i.startswith("Q") and i not in push.CORE_IDS)
+    src.entities[victim]["descriptions"] = {"en": {"language": "en", "value": "long sentence here " * 30}}
+    rep = pusher.run(ids)
+    assert not rep.failed_entities
+    assert any(victim in line and "->" in line for line in rep.shortened) and len(rep.shortened) == 1
+    created = pusher.idmap.map[victim]
+    assert len(fake.entities[created]["descriptions"]["en"]["value"]) <= 250
+    assert src.entities[victim]["descriptions"]["en"]["value"].startswith("long sentence")   # the source stays whole

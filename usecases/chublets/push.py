@@ -303,6 +303,7 @@ class Report:
     claims_deferred: list[dict[str, str]] = field(default_factory=list)
     claims_failed: list[dict[str, str]] = field(default_factory=list)
     calls: list[str] = field(default_factory=list)       # dry run: the list of calls
+    shortened: list[str] = field(default_factory=list)   # texts cut to the 250 characters Wikibase allows
     write_calls: int = 0
 
     def as_dict(self) -> dict[str, Any]:
@@ -320,6 +321,7 @@ class Report:
                 "failed": len(self.claims_failed),
             },
             "write_calls": self.write_calls,
+            "shortened": self.shortened,
             "failed_entities": self.failed_entities,
             "claims_deferred": self.claims_deferred,
             "claims_failed": self.claims_failed,
@@ -355,14 +357,36 @@ def select(source: Source, phases: set[str], *, values: str, origins: set[str] |
     return ids
 
 
-def entity_payload(src: dict[str, Any], settings: Settings) -> dict[str, Any]:
+MAX_TEXT = 250          # Wikibase: labels, descriptions and aliases are at most 250 characters long
+
+
+def shorten(text: str, limit: int = MAX_TEXT) -> str:
+    """At most ``limit`` characters: cut at a word boundary and end with an ellipsis."""
+    if len(text) <= limit:
+        return text
+    cut = text[: limit - 1]
+    if " " in cut[limit // 2:]:
+        cut = cut.rsplit(" ", 1)[0]
+    return cut.rstrip(" ,;:.-") + "\u2026"
+
+
+def entity_payload(src: dict[str, Any], settings: Settings, shortened: list[str] | None = None) -> dict[str, Any]:
     data: dict[str, Any] = {}
+
+    def fit(value: str, what: str) -> str:
+        out = shorten(value)
+        if out != value and shortened is not None:
+            shortened.append(f"{src.get('id', '?')} {what} ({len(value)} -> {len(out)} characters)")
+        return out
+
     for key in ("labels", "descriptions"):
         if src.get(key):
-            data[key] = {lang: {"language": lang, "value": v["value"]} for lang, v in src[key].items()}
+            data[key] = {lang: {"language": lang, "value": fit(v["value"], f"{key[:-1]} {lang}")}
+                         for lang, v in src[key].items()}
     if src.get("aliases"):
         data["aliases"] = {
-            lang: [{"language": lang, "value": a["value"]} for a in vals] for lang, vals in src["aliases"].items() if vals
+            lang: [{"language": lang, "value": fit(a["value"], f"alias {lang}")} for a in vals]
+            for lang, vals in src["aliases"].items() if vals
         }
     if src["type"] == "property":
         datatype = src["datatype"]
@@ -486,7 +510,7 @@ class Pusher:
                 if eid not in self.report.adopted:
                     self.report.skipped.append(eid)
                 continue
-            payload = entity_payload(src, self.settings)
+            payload = entity_payload(src, self.settings, self.report.shortened)
             new = src["type"]
             label = label_en(src)
             if eid in CORE_IDS and self.settings.core_ids == "same":

@@ -97,3 +97,10 @@ Accounts without the bot right may only edit a limited number of times in a shor
 (`rate_limit_wait`, default 60 s) and retries up to `rate_limit_retries` times (default 5), then stops. Everything
 done is already in `idmap-<target>.csv` and `state-<target>.json`: run the same command again. A durable cure is
 the `bot` group for the push account (Special:UserRights on the target wiki) and `mark_bot = true`.
+
+## Texts over 250 characters
+
+Wikibase refuses labels, descriptions and aliases longer than 250 characters. The push cuts such a text at a word boundary
+and ends it with an ellipsis; the entities concerned are listed under `shortened` in `report/push-last.json`. The CSV and the
+static site keep the whole text. An entity that failed for this reason is created by the next run (`failed` entities are not
+in `idmap`).
