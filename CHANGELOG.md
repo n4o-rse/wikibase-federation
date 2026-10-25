@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.4
+- Documentation only: result of the Chublets push (980 entities, 7 012 statements, second run 0 writes), federated values
+  confirmed on the target, the idmap is published by `wikibase-static` 0.19.0, the push account has no `bot` right.
+
 ## 1.2.3
 - Chublets push: Wikibase allows at most 250 characters in a label, description or alias. Longer texts are cut at a
   word boundary and end with an ellipsis (`shorten`); the report lists them under `shortened`, the source

@@ -25,7 +25,7 @@ write access, and the credentials stay in the git-ignored `config.ini` here.
 | `model` | the 7 classes and the 158 properties of `entities.csv` | new ids, recorded in `idmap-<target>.csv` |
 | `items` | items of `entities.csv`, `--origin open-archaeo` / `wikidata`, `--limit N` | new ids, recorded in the idmap |
 
-Default is `core,model`. Items follow later, in steps, as decided.
+Default is `core,model`. Items are written in steps (`--limit`, `--origin`); the order that worked is below.
 
 Each run finishes what earlier runs had to defer: a claim whose value points at an entity that is not in
 the target yet is skipped, reported (`report/push-last.json`) and written by a later run.
@@ -82,10 +82,13 @@ Later steps:
 
 ## Not covered
 
-- `wbeditentity` with federated values is alpha (see the main README); the first real run on the target is
-  the first real test. Answers of the target (`--probe`, one `wbgetentities`) are still to be saved as fixtures.
+- `wbeditentity` with federated values is alpha (see the main README). It worked on `chublets-wikibase.de`: the value is
+  stored as `{"entity-type":"item","id":"http://www.wikidata.org/entity/Q…"}` without `numeric-id` (checked with
+  `wbgetentities` on Q42). How the wiki's own page shows it, and a query over it, were not checked.
+  Answers of the target (`--probe`, one `wbgetentities`) are still to be saved as fixtures.
 - The ids of items and properties from 100 on differ between the CSV and the target. `idmap-<target>.csv`
-  holds the mapping; writing it back into the CSV is a step of `wikibase-static`, not of this repository.
+  holds the mapping. The CSV is not renumbered; `wikibase-static` 0.19.0 publishes the idmap as the `counterpart` of the
+  demo (link and `owl:sameAs` on every page). Copy the idmap into the demo after every push.
 - A crash between creating an entity and writing its idmap line would leave an entity the idmap does not
   know. The idmap is written line by line right after each creation to keep that window small.
 - Quantities with a unit and entities of another kind of reference are deferred, not translated.
@@ -96,7 +99,9 @@ Accounts without the bot right may only edit a limited number of times in a shor
 `chublets-wikibase.de` created 90 entities and was then refused. Since 1.2.2 the push waits
 (`rate_limit_wait`, default 60 s) and retries up to `rate_limit_retries` times (default 5), then stops. Everything
 done is already in `idmap-<target>.csv` and `state-<target>.json`: run the same command again. A durable cure is
-the `bot` group for the push account (Special:UserRights on the target wiki) and `mark_bot = true`.
+the `bot` group for the push account (Special:UserRights on the target wiki) and `mark_bot = true`. On
+`chublets-wikibase.de` the account has no group beyond the automatic ones (checked 2026-10-25), so the limit applies and the
+wait-and-retry is what carried the runs.
 
 ## Texts over 250 characters
 
@@ -104,3 +109,10 @@ Wikibase refuses labels, descriptions and aliases longer than 250 characters. Th
 and ends it with an ellipsis; the entities concerned are listed under `shortened` in `report/push-last.json`. The CSV and the
 static site keep the whole text. An entity that failed for this reason is created by the next run (`failed` entities are not
 in `idmap`).
+
+## Result on chublets-wikibase.de (2026-10-24 and 2026-10-25)
+
+980 entities (178 of `core` and `model`, 802 items: 796 from open-archaeo, 6 from Wikidata) and 7 012 statements. The 20 Wikidata
+stubs (17 items, 3 classes) are never created; statements that point at them carry the federated Wikidata item. A run over all
+phases (`--phase core,model,items --write`) reports 980 skipped and 0 writes. The order that worked: dry run, `--limit 20`
+(dry), 40, 200, all open-archaeo items, Wikidata items, a final run over everything. 22 descriptions were shortened (see above).
