@@ -116,3 +116,5 @@ in `idmap`).
 stubs (17 items, 3 classes) are never created; statements that point at them carry the federated Wikidata item. A run over all
 phases (`--phase core,model,items --write`) reports 980 skipped and 0 writes. The order that worked: dry run, `--limit 20`
 (dry), 40, 200, all open-archaeo items, Wikidata items, a final run over everything. 22 descriptions were shortened (see above).
+
+A further run on 2026-11-02 wrote six statements (the topic Chronological modelling on six tools, Alligator among them), so the target holds 7 018 statements.
