@@ -5,6 +5,8 @@
     python usecases\\chublets\\pipeline.py --probe                  read only: login, siteinfo, core ids
     python usecases\\chublets\\pipeline.py --write                  really write core + model
     python usecases\\chublets\\pipeline.py --write --phase items --origin open-archaeo --limit 20
+    python usecases\\chublets\\pipeline.py --phase core,model,items --prune             dry run incl. claims that left the source
+    python usecases\\chublets\\pipeline.py --write --phase core,model,items --prune     remove them, then write what is new
 
 Dry run is the default; a real run needs ``--write`` AND ``[chublets] allow_write = true`` in config.ini.
 Settings (``[chublets]`` in config.ini): source_dir, target, values, url_as_string, allow_write.
@@ -111,6 +113,8 @@ def run(
     origins: set[str] | None = None,
     do_probe: bool = False,
     do_inventory: bool = False,
+    do_prune: bool = False,
+    prune_max: int = 50,
 ) -> int:
     try:
         path, _ = resolve_config_path(config_path)
@@ -170,7 +174,7 @@ def run(
         client.login()
     pusher = push.Pusher(source, client, idmap, state, settings, dry_run=dry_run)
     try:
-        report = pusher.run(ids, adopt)
+        report = pusher.run(ids, adopt, prune=do_prune, prune_max=prune_max)
     except push.PushAbort as exc:
         print(f"ABORT: {exc}")
         done = pusher.report.as_dict()
@@ -182,6 +186,15 @@ def run(
     if dry_run:
         for line in report.calls:
             print("  " + line)
+    if do_prune:
+        print(f"prune: {len(report.claims_removed)} claim(s) {'would be ' if dry_run else ''}removed, {len(report.claims_gone)} already gone, "
+              f"{len(report.claims_stale_unknown)} without a known GUID (remove by hand), "
+              f"{len(report.claims_orphaned)} of entities no longer in the source (left alone)")
+        if not dry_run:
+            for line in report.claims_removed:
+                print("  removed " + line)
+        for sid in report.claims_stale_unknown[:20]:
+            print(f"  remove by hand: {sid} (no GUID in the state)")
     summary = {k: v for k, v in out.items() if k in {"entities", "claims", "write_calls"}}
     print(json.dumps(summary, indent=1))
     for d in report.claims_deferred[:10]:
@@ -209,6 +222,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--phase", default="core,model", help="comma list of core, model, items (default core,model)")
     ap.add_argument("--origin", default="", help="items only: comma list of origins, e.g. open-archaeo,wikidata")
     ap.add_argument("--limit", type=int, default=None, help="items only: the first N items")
+    ap.add_argument("--prune", action="store_true",
+                    help="first take from the target the claims that the source no longer has (dry run lists them)")
+    ap.add_argument("--prune-max", type=int, default=50,
+                    help="--prune stops before removing anything when more claims than this are stale (default 50)")
     ap.add_argument("--verbose", "-v", action="store_true")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format="%(levelname)-7s %(message)s")
@@ -218,7 +235,8 @@ def main(argv: list[str] | None = None) -> int:
         ap.error(f"unknown phase: {', '.join(sorted(bad))}")
     origins = {o.strip() for o in args.origin.split(",") if o.strip()} or None
     return run(config_path=args.config, dry_run=not args.write, limit=args.limit,
-               phases=phases, origins=origins, do_probe=args.probe, do_inventory=args.inventory)
+               phases=phases, origins=origins, do_probe=args.probe, do_inventory=args.inventory,
+               do_prune=args.prune, prune_max=args.prune_max)
 
 
 if __name__ == "__main__":

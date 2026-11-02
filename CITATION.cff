@@ -12,8 +12,8 @@ authors:
     orcid: "https://orcid.org/0000-0002-3246-3531"
     affiliation: "Leibniz-Zentrum für Archäologie (LEIZA)"
 license: MIT
-version: "1.2.4"
-date-released: "2026-10-25"
+version: "1.3.0"
+date-released: "2026-11-02"
 repository-code: "https://github.com/n4o-rse/wikibase-federation"
 keywords:
   - Wikibase

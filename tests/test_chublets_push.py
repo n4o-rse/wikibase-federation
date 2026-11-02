@@ -31,6 +31,8 @@ class FakeWikibase:
         self.fail_labels: set[str] = set()
         self.limit_next = 0                      # the next N edit calls are refused as "too many edits"
         self.limit_after: int | None = None      # after N successful edits every edit is refused
+        self.remove_limit_next = 0               # the next N removals are refused as "too many edits"
+        self.remove_fails: set[str] = set()      # GUIDs whose removal raises
         self.property_datatypes: dict[str, str] = {}
         for eid, spec in (preset or {}).items():
             label, datatype = spec if isinstance(spec, tuple) else (spec, None)
@@ -72,9 +74,26 @@ class FakeWikibase:
         ent = self.entities[entity_id]
         for claim in data.get("claims", []):
             claim = json.loads(json.dumps(claim))
-            claim["id"] = f"{entity_id}${len(ent['claims']) + 1:04d}-guid"
+            claim["id"] = f"{entity_id}${sum(len(v) for v in ent['claims'].values()) + 1:04d}-guid"
             ent["claims"].setdefault(claim["mainsnak"]["property"], []).append(claim)
         return {"success": 1, "entity": ent}
+
+    def remove_claim(self, claim_id):
+        if self.remove_limit_next > 0:
+            self.remove_limit_next -= 1
+            raise RuntimeError("ratelimited: Im Rahmen einer Anti-Missbrauchs-Maßnahme kann diese Aktion nur begrenzt oft ausgeführt werden.")
+        if claim_id in self.remove_fails:
+            raise RuntimeError("permissiondenied: you may not remove this claim")
+        self.calls.append(("remove", claim_id))
+        ent = self.entities.get(claim_id.split("$")[0]) or {}
+        for pid, claims in list(ent.get("claims", {}).items()):
+            for c in claims:
+                if c["id"] == claim_id:
+                    claims.remove(c)
+                    if not claims:
+                        del ent["claims"][pid]
+                    return {"success": 1}
+        raise RuntimeError("no-such-claim: Could not find the claim")
 
     def entity_namespaces(self):
         return {"wikibase-item": 120, "wikibase-property": 122}
@@ -544,3 +563,187 @@ def test_a_description_over_250_characters_is_shortened_and_reported(source_dir,
     created = pusher.idmap.map[victim]
     assert len(fake.entities[created]["descriptions"]["en"]["value"]) <= 250
     assert src.entities[victim]["descriptions"]["en"]["value"].startswith("long sentence")   # the source stays whole
+
+
+# -- --prune: claims that left the source ---------------------------------------
+
+
+def push_all(source_dir, tmp_path, fake):
+    return run_phases(source_dir, tmp_path, fake, ["core", "model", "items"])
+
+
+def edit_source(source_dir: Path, eid: str, change) -> None:
+    path = source_dir / "data" / "derived" / "entities" / f"{eid}.json"
+    ent = json.loads(path.read_text(encoding="utf-8"))
+    change(ent)
+    path.write_text(json.dumps(ent), encoding="utf-8")
+
+
+def drop_claim(ent: dict, cid: str) -> None:
+    for pid, plist in list(ent["claims"].items()):
+        ent["claims"][pid] = [c for c in plist if c["id"] != cid]
+        if not ent["claims"][pid]:
+            del ent["claims"][pid]
+
+
+def prune_run(source_dir, tmp_path, fake, *, dry_run=False, prune_max=50):
+    src, pusher = make(source_dir, tmp_path, fake, dry_run=dry_run)
+    ids = push.select(src, {"core", "model", "items"}, values="federated")
+    return pusher, pusher.run(ids, None, prune=True, prune_max=prune_max)
+
+
+def target_claims(fake, source_eid: str, idmap: dict[str, str]):
+    return [c for plist in fake.entities[idmap[source_eid]].get("claims", {}).values() for c in plist]
+
+
+def test_nothing_is_stale_after_a_clean_push_and_prune_then_touches_nothing(source_dir, tmp_path):
+    fake = FakeWikibase()
+    push_all(source_dir, tmp_path, fake)
+    before = len(fake.calls)
+    pusher, report = prune_run(source_dir, tmp_path, fake)
+    assert pusher.stale_claims() == ([], [], [])
+    assert report.claims_removed == [] and report.write_calls == 0
+    assert not [c for c in fake.calls[before:] if c[0] == "remove"]
+
+
+def test_a_claim_that_left_the_source_is_removed_from_the_target_and_from_the_state(source_dir, tmp_path):
+    fake = FakeWikibase()
+    push_all(source_dir, tmp_path, fake)
+    idmap = push.IdMap(tmp_path / "idmap-test.csv").map
+    assert any(c["mainsnak"]["property"] == "P2" for c in target_claims(fake, "Q201", idmap))
+    edit_source(source_dir, "Q201", lambda e: drop_claim(e, "Q201$a"))
+    pusher, report = prune_run(source_dir, tmp_path, fake)
+    assert [c["mainsnak"]["property"] for c in target_claims(fake, "Q201", idmap)] == []
+    assert len(report.claims_removed) == 1 and "P2|value" in report.claims_removed[0]     # what it said is reported
+    assert "Q201$a" not in json.loads((tmp_path / "state-test.json").read_text(encoding="utf-8"))
+    assert len(target_claims(fake, "Q200", idmap)) == 3                                       # the others are untouched
+    _, again = prune_run(source_dir, tmp_path, fake)                                          # a second run has nothing left to do
+    assert again.claims_removed == []
+
+
+def test_prune_dry_run_lists_the_calls_and_changes_neither_target_nor_state(source_dir, tmp_path):
+    fake = FakeWikibase()
+    push_all(source_dir, tmp_path, fake)
+    idmap = push.IdMap(tmp_path / "idmap-test.csv").map
+    edit_source(source_dir, "Q201", lambda e: drop_claim(e, "Q201$a"))
+    state_before = (tmp_path / "state-test.json").read_text(encoding="utf-8")
+    calls_before = len(fake.calls)
+    _, report = prune_run(source_dir, tmp_path, FakeWikibase(), dry_run=True)
+    assert [c for c in report.calls if c.startswith("wbremoveclaims")] and "Q201$a" in " ".join(report.calls)
+    assert len(fake.calls) == calls_before and len(target_claims(fake, "Q201", idmap)) == 1
+    assert (tmp_path / "state-test.json").read_text(encoding="utf-8") == state_before
+
+
+def test_a_statement_written_again_with_a_reference_ends_up_once_and_with_the_reference(source_dir, tmp_path):
+    """The case of the data care of 2026-11-02: a hand row removed and added again with a reference gets a new claim id."""
+    fake = FakeWikibase()
+    push_all(source_dir, tmp_path, fake)
+    idmap = push.IdMap(tmp_path / "idmap-test.csv").map
+
+    def again(ent):
+        old = next(c for c in ent["claims"]["P2"] if c["id"] == "Q201$a")
+        new = json.loads(json.dumps(old))
+        new["id"] = "Q201$a-with-reference"
+        new["references"] = [{"snaks": {"P6": [_snak("P6", "url", "https://example.org/page")]}, "snaks-order": ["P6"]}]
+        ent["claims"]["P2"] = [new]
+
+    edit_source(source_dir, "Q201", again)
+    _, report = prune_run(source_dir, tmp_path, fake)
+    claims = target_claims(fake, "Q201", idmap)
+    assert len(claims) == 1 and claims[0].get("references"), claims
+    assert report.claims_removed and report.claims_failed == []
+
+
+def test_a_plain_push_before_the_prune_cannot_make_the_new_claim_look_present(source_dir, tmp_path):
+    """Without --prune the old claim is still on the target; the new one must be written next to it, not taken for it."""
+    fake = FakeWikibase()
+    push_all(source_dir, tmp_path, fake)
+    idmap = push.IdMap(tmp_path / "idmap-test.csv").map
+
+    def again(ent):
+        old = next(c for c in ent["claims"]["P2"] if c["id"] == "Q201$a")
+        new = json.loads(json.dumps(old))
+        new["id"] = "Q201$a-with-reference"
+        new["references"] = [{"snaks": {"P6": [_snak("P6", "url", "https://example.org/page")]}, "snaks-order": ["P6"]}]
+        ent["claims"]["P2"] = [new]
+
+    edit_source(source_dir, "Q201", again)
+    push_all(source_dir, tmp_path, fake)                                  # the habit: a plain run first
+    assert len(target_claims(fake, "Q201", idmap)) == 2                   # old and new side by side
+    prune_run(source_dir, tmp_path, fake)                                 # then the prune takes the old one
+    claims = target_claims(fake, "Q201", idmap)
+    assert len(claims) == 1 and claims[0].get("references")
+
+
+def test_prune_stops_before_the_first_removal_when_too_many_claims_are_stale(source_dir, tmp_path):
+    fake = FakeWikibase()
+    push_all(source_dir, tmp_path, fake)
+    idmap = push.IdMap(tmp_path / "idmap-test.csv").map
+    for eid in ("Q200", "Q201", "Q202"):
+        edit_source(source_dir, eid, lambda e: e.update(claims={}))
+    before = sum(len(target_claims(fake, e, idmap)) for e in ("Q200", "Q201", "Q202"))
+    with pytest.raises(push.PushAbort, match="--prune-max 2"):
+        prune_run(source_dir, tmp_path, fake, prune_max=2)
+    assert sum(len(target_claims(fake, e, idmap)) for e in ("Q200", "Q201", "Q202")) == before
+    prune_run(source_dir, tmp_path, fake, prune_max=10)                   # raised: it goes through
+    assert sum(len(target_claims(fake, e, idmap)) for e in ("Q200", "Q201", "Q202")) == 0
+
+
+def test_a_stale_claim_without_a_guid_is_reported_and_left_alone(source_dir, tmp_path):
+    fake = FakeWikibase()
+    push_all(source_dir, tmp_path, fake)
+    idmap = push.IdMap(tmp_path / "idmap-test.csv").map
+    state = json.loads((tmp_path / "state-test.json").read_text(encoding="utf-8"))
+    state["Q201$a"] = "present-on-target"
+    (tmp_path / "state-test.json").write_text(json.dumps(state), encoding="utf-8")
+    edit_source(source_dir, "Q201", lambda e: drop_claim(e, "Q201$a"))
+    _, report = prune_run(source_dir, tmp_path, fake)
+    assert report.claims_stale_unknown == ["Q201$a"] and report.claims_removed == []
+    assert len(target_claims(fake, "Q201", idmap)) == 1
+
+
+def test_claims_of_an_entity_that_is_not_in_the_source_any_more_are_left_alone(source_dir, tmp_path):
+    fake = FakeWikibase()
+    push_all(source_dir, tmp_path, fake)
+    idmap = push.IdMap(tmp_path / "idmap-test.csv").map
+    (source_dir / "data" / "derived" / "entities" / "Q202.json").unlink()
+    _, report = prune_run(source_dir, tmp_path, fake)
+    assert report.claims_orphaned == ["Q202$a"] and report.claims_removed == []
+    assert len(target_claims(fake, "Q202", idmap)) == 1
+
+
+def test_a_stale_claim_that_the_target_does_not_hold_any_more_counts_as_gone(source_dir, tmp_path):
+    fake = FakeWikibase()
+    push_all(source_dir, tmp_path, fake)
+    idmap = push.IdMap(tmp_path / "idmap-test.csv").map
+    edit_source(source_dir, "Q201", lambda e: drop_claim(e, "Q201$a"))
+    fake.entities[idmap["Q201"]]["claims"] = {}                           # somebody removed it by hand
+    _, report = prune_run(source_dir, tmp_path, fake)
+    assert len(report.claims_gone) == 1 and report.claims_removed == [] and report.write_calls == 0
+    assert "Q201$a" not in json.loads((tmp_path / "state-test.json").read_text(encoding="utf-8"))
+
+
+def test_a_failed_removal_is_reported_the_run_continues_and_a_rerun_finishes(source_dir, tmp_path):
+    fake = FakeWikibase()
+    push_all(source_dir, tmp_path, fake)
+    idmap = push.IdMap(tmp_path / "idmap-test.csv").map
+    edit_source(source_dir, "Q200", lambda e: drop_claim(e, "Q200$c"))
+    edit_source(source_dir, "Q201", lambda e: drop_claim(e, "Q201$a"))
+    state = json.loads((tmp_path / "state-test.json").read_text(encoding="utf-8"))
+    fake.remove_fails.add(state["Q200$c"])
+    _, report = prune_run(source_dir, tmp_path, fake)
+    assert [f["claim"] for f in report.claims_failed] == ["Q200$c"] and len(report.claims_removed) == 1
+    assert len(target_claims(fake, "Q201", idmap)) == 0 and "Q200$c" in json.loads((tmp_path / "state-test.json").read_text(encoding="utf-8"))
+    fake.remove_fails.clear()
+    _, again = prune_run(source_dir, tmp_path, fake)
+    assert len(again.claims_removed) == 1 and again.claims_failed == []
+
+
+def test_prune_waits_out_a_rate_limit(source_dir, tmp_path):
+    fake = FakeWikibase()
+    push_all(source_dir, tmp_path, fake)
+    idmap = push.IdMap(tmp_path / "idmap-test.csv").map
+    edit_source(source_dir, "Q201", lambda e: drop_claim(e, "Q201$a"))
+    fake.remove_limit_next = 2
+    _, report = prune_run(source_dir, tmp_path, fake)
+    assert len(report.claims_removed) == 1 and len(target_claims(fake, "Q201", idmap)) == 0

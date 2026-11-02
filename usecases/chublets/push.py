@@ -16,6 +16,9 @@ Phases (cumulative; whatever is already in the idmap is skipped):
 - ``model``  all classes and properties of ``entities.csv`` (new ids, see idmap);
 - ``items``  items of ``entities.csv``, filtered by ``origin`` and ``limit``.
 
+``--prune`` (any phases) first takes from the target the claims that the source no longer has: the push only ever adds,
+so a statement taken out of the CSV, or written again with a reference, would otherwise stay on the target.
+
 The network is only touched for a real run (or ``--probe``). Nothing here reads the clock.
 """
 
@@ -305,6 +308,10 @@ class Report:
     calls: list[str] = field(default_factory=list)       # dry run: the list of calls
     shortened: list[str] = field(default_factory=list)   # texts cut to the 250 characters Wikibase allows
     write_calls: int = 0
+    claims_removed: list[str] = field(default_factory=list)         # --prune: GUIDs taken from the target (dry run: those that would be)
+    claims_gone: list[str] = field(default_factory=list)            # --prune: stale, but the target did not hold them any more
+    claims_stale_unknown: list[str] = field(default_factory=list)   # --prune: stale, no GUID in the state; remove by hand
+    claims_orphaned: list[str] = field(default_factory=list)        # --prune: claims of an entity the source no longer has; left alone
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -321,6 +328,12 @@ class Report:
                 "failed": len(self.claims_failed),
             },
             "write_calls": self.write_calls,
+            "pruned": {
+                "removed": self.claims_removed,
+                "gone": self.claims_gone,
+                "stale_unknown_guid": self.claims_stale_unknown,
+                "orphaned": self.claims_orphaned,
+            },
             "shortened": self.shortened,
             "failed_entities": self.failed_entities,
             "claims_deferred": self.claims_deferred,
@@ -520,9 +533,13 @@ class Pusher:
 
     def _edit(self, data: dict, **kw: Any) -> dict:
         """``edit_entity`` that waits and retries when the wiki rate-limits the account."""
+        return self._retrying(lambda: self.client.edit_entity(data, **kw))
+
+    def _retrying(self, call: Any) -> dict:
+        """Run ``call`` (one write to the target); wait and retry when the wiki rate-limits the account."""
         for attempt in range(self.settings.rate_limit_retries + 1):
             try:
-                return self.client.edit_entity(data, **kw)
+                return call()
             except Exception as exc:                  # noqa: BLE001
                 if not is_rate_limit(exc):
                     raise
@@ -577,6 +594,75 @@ class Pusher:
         time.sleep(self.settings.throttle)
         return new_id
 
+    # -- pass 1b: claims that left the source -----------------------------------
+    def stale_claims(self) -> tuple[list[tuple[str, str]], list[str], list[str]]:
+        """What the state remembers and the source no longer has: ``(removable, unknown, orphans)``.
+
+        ``removable``  (source claim id, target GUID) of a claim of an entity that is still in the source;
+        ``unknown``    source claim ids whose GUID the state does not hold (``present-on-target``, ``written-guid-unknown``);
+        ``orphans``    source claim ids of an entity that is not in the source any more.
+        """
+        current = {c["id"] for ent in self.source.entities.values() for plist in ent.get("claims", {}).values() for c in plist}
+        removable: list[tuple[str, str]] = []
+        unknown: list[str] = []
+        orphans: list[str] = []
+        for sid, guid in sorted(self.state.data.items()):
+            if sid in current:
+                continue
+            if sid.split("$", 1)[0] not in self.source.entities:
+                orphans.append(sid)
+            elif "$" in guid:
+                removable.append((sid, guid))
+            else:
+                unknown.append(sid)
+        return removable, unknown, orphans
+
+    def prune(self, max_remove: int = 50) -> None:
+        """Take from the target the claims that the source no longer has (``--prune``).
+
+        The push only adds. A row that leaves the CSV (``apply-qs`` removes a statement, a merge makes two statements one, a statement is
+        written again with a reference) leaves its claim on the target; the state still holds its GUID, and this finds it. Only claims
+        of entities that are still in the source are removed. What is not certain is reported and left alone: no GUID in the state
+        (remove by hand), or the entity itself is gone from the source. Each claim is looked up on the target first and reported with
+        what it said; one that is not there any more counts as gone. More than ``max_remove`` stops the run before the first removal
+        (a wrong ``source_dir`` makes every claim look stale).
+        """
+        removable, unknown, orphans = self.stale_claims()
+        self.report.claims_stale_unknown += unknown
+        self.report.claims_orphaned += orphans
+        if len(removable) > max_remove:
+            raise PushAbort(f"{len(removable)} claims are no longer in the source, more than --prune-max {max_remove}: nothing removed. "
+                            "Check source_dir (is it the demo of the last push, built?), then raise --prune-max.")
+        if not removable:
+            return
+        if self.dry_run:
+            for sid, guid in removable:
+                self.report.claims_removed.append(guid)
+                self.report.calls.append(f"wbremoveclaims claim={guid} (source claim {sid} is no longer in the source)")
+            return
+        remote = self.client.get_entities(sorted({guid.split("$", 1)[0] for _, guid in removable}))
+        held = {c["id"]: c for ent in remote.values() for plist in (ent or {}).get("claims", {}).values() for c in plist}
+        for sid, guid in removable:
+            claim = held.get(guid)
+            if claim is None:
+                self.report.claims_gone.append(guid)
+                del self.state.data[sid]
+                continue
+            try:
+                self._retrying(lambda guid=guid: self.client.remove_claim(guid))
+            except PushAbort:
+                self.state.save()
+                raise
+            except Exception as exc:                  # noqa: BLE001
+                self.report.claims_failed.append({"entity": sid.split("$", 1)[0], "claim": sid, "reason": str(exc)})
+                continue
+            self.report.write_calls += 1
+            self.report.claims_removed.append(f"{guid}  {canonical_claim(claim)}")
+            del self.state.data[sid]
+            self.state.save()
+            time.sleep(self.settings.throttle)
+        self.state.save()
+
     # -- pass 2 ----------------------------------------------------------------
     def write_claims(self, ids: list[str]) -> None:
         """Claims of the chosen entities and of everything already on the target.
@@ -596,6 +682,7 @@ class Pusher:
             len(c) for plist in (self.source.entities[e].get("claims", {}).values() for e in pending) for c in plist
         ) - sum(len(v) for v in todo.values())
         remote: dict[str, dict | None] = {}
+        stale = {guid for _sid, guid in self.stale_claims()[0]}
         if not self.dry_run:
             targets = [self.idmap.map[e] for e in pending if todo[e]]
             remote = self.client.get_entities(targets) if targets else {}
@@ -607,6 +694,8 @@ class Pusher:
             existing = remote.get(target) or {}
             for plist in existing.get("claims", {}).values():
                 for c in plist:
+                    if c["id"] in stale:
+                        continue         # a claim that --prune is about to take away must not make a new one look "present"
                     have.add(canonical_claim(c))
             new_claims: list[tuple[str, dict[str, Any]]] = []
             for claim in sorted(todo[eid], key=lambda c: _sort_key(c["mainsnak"]["property"])):
@@ -650,8 +739,11 @@ class Pusher:
         time.sleep(self.settings.throttle)
 
     # -- all -------------------------------------------------------------------
-    def run(self, ids: list[str], adopt: dict[str, str] | None = None) -> Report:
+    def run(self, ids: list[str], adopt: dict[str, str] | None = None, *, prune: bool = False, prune_max: int = 50) -> Report:
         self.adopt_existing(adopt or {})
+        if prune:
+            # Before the writes: a statement written again with a reference looks "present" while its old claim is still there.
+            self.prune(prune_max)
         self.create_entities(ids)
         self.write_claims(ids)
         if not self.dry_run:

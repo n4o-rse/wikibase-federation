@@ -80,11 +80,40 @@ Later steps:
     python usecases\chublets\pipeline.py --write --phase items --origin open-archaeo --limit 20
     python usecases\chublets\pipeline.py --write --phase items --origin wikidata
 
+## Claims that left the source (`--prune`, since 1.3.0)
+
+The push never removed anything: a statement taken out of the CSV model (a `-Q…` line of QuickStatements, a merge) stayed on
+the wiki. With `--prune` the run first removes the claims it once wrote (`state-<target>.json` knows their GUIDs) and that
+the source no longer holds, and only then writes what is new:
+
+    python usecases\chublets\pipeline.py --phase core,model,items --prune             dry run: lists every wbremoveclaims
+    python usecases\chublets\pipeline.py --write --phase core,model,items --prune     removes, then writes
+
+- A claim is *stale* when its source claim id is in the state file but no longer in `data/derived/entities/<id>.json`.
+- Only claims with a GUID from the state file are removed. A state entry `present-on-target` (adopted, no GUID), and claims of
+  an entity that is not in the source any more, are reported (`without GUID`, `orphans`) and left alone.
+- A claim that the wiki does not hold any more counts as *already gone*; the state entry is dropped.
+- A claim whose removal fails is reported and the run goes on; running it again retries. The rate limit is waited out as for edits.
+- Brake: more than `--prune-max` (default 50) stale claims abort the run before the first removal. Raise it on purpose.
+- A claim that is replaced by one with another source claim id (a statement re-added with a reference) is written once:
+  the stale twin is not taken for "already present". Plain `--write` without `--prune` leaves the old claim next to the new
+  one until the prune takes it.
+
+## Query service check (since 1.3.0)
+
+    python usecases\chublets\query_check.py
+
+Read only. Finds the SPARQL endpoint below `https://query.chublets-wikibase.de`, looks up the item Q811 (Alligator) by its
+label, lists its direct claims sorted into *federated* (`http://www.wikidata.org/entity/Q…`), *local* and *literal*, tests whether
+the label service names the federated developers, and counts the chublets and the tools per topic (439 before `--prune`,
+420 after). It writes `report/query-service-<date>.md` and `.json`. It was written without access to the service and is only
+tested against a local fake server: the first live run is the actual check of how federated values appear in queries.
+
 ## Not covered
 
 - `wbeditentity` with federated values is alpha (see the main README). It worked on `chublets-wikibase.de`: the value is
   stored as `{"entity-type":"item","id":"http://www.wikidata.org/entity/Q…"}` without `numeric-id` (checked with
-  `wbgetentities` on Q42). How the wiki's own page shows it, and a query over it, were not checked.
+  `wbgetentities` on Q42). How the wiki's own page shows it, and a query over it, were not checked (`query_check.py` does the query part).
   Answers of the target (`--probe`, one `wbgetentities`) are still to be saved as fixtures.
 - The ids of items and properties from 100 on differ between the CSV and the target. `idmap-<target>.csv`
   holds the mapping. The CSV is not renumbered; `wikibase-static` 0.19.0 publishes the idmap as the `counterpart` of the

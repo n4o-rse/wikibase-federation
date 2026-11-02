@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.3.0
+- Chublets push: `--prune` (and `--prune-max`, default 50). Claims that the push wrote once and that the source no longer holds
+  are removed with `wbremoveclaims` before new claims are written; dry run lists the calls. Claims without a GUID in the state
+  file and claims of entities that left the source are reported and left alone. Needed after the data care of 2026-11-02
+  (22 items no longer chublets, 2 duplicate developers of Alligator removed, 6 statements re-added with a reference).
+- Chublets push: a stale remote claim no longer counts as "already present" for a new claim with the same value.
+- New `usecases/chublets/query_check.py`: read-only check of the query service (how federated values appear, label service,
+  chublet and topic counts); report in `report/`.
+- Tests: 18 more (89 in the repository); the fake wiki knows `wbremoveclaims`.
+
 ## 1.2.4
 - Documentation only: result of the Chublets push (980 entities, 7 012 statements, second run 0 writes), federated values
   confirmed on the target, the idmap is published by `wikibase-static` 0.19.0, the push account has no `bot` right.
