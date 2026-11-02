@@ -37,7 +37,7 @@ HERE = Path(__file__).resolve().parent
 DEFAULT_HOST = "https://query.chublets-wikibase.de"
 ENDPOINT_PATHS = ("/proxy/wdqs/bigdata/namespace/wdq/sparql", "/bigdata/namespace/wdq/sparql", "/sparql")
 WIKIDATA_ENTITY = "http://www.wikidata.org/entity/"
-USER_AGENT = "wikibase-federation-query-check/1.3.0 (https://github.com/florianthiery/wikibase-federation)"
+USER_AGENT = "wikibase-federation-query-check/1.3.1 (https://github.com/florianthiery/wikibase-federation)"
 
 # source ids (CSV model) that the check needs; the target ids come from the idmap
 SRC_CHUBLET, SRC_INSTANCE_OF, SRC_DEVELOPER, SRC_MAIN_SUBJECT = "Q106", "P2", "P113", "P117"
@@ -216,8 +216,10 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    (out / f"query-service-{now.isoformat()}.md").write_text(text, encoding="utf-8", newline="\n")
-    (out / f"query-service-{now.isoformat()}.json").write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
+    # Path.write_text(newline=...) needs Python 3.10; the CI also runs 3.9
+    for suffix, content in (("md", text), ("json", json.dumps(result, indent=2, ensure_ascii=False) + "\n")):
+        with (out / f"query-service-{now.isoformat()}.{suffix}").open("w", encoding="utf-8", newline="\n") as handle:
+            handle.write(content)
     print(text)
     print(f"written: {out / ('query-service-' + now.isoformat() + '.md')}")
     return 0

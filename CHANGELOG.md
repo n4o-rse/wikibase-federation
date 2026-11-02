@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.1
+- Fix: `usecases/chublets/query_check.py` failed on Python 3.9 (`Path.write_text(newline=...)` exists only from 3.10), which the CI matrix
+  tests. The reports are written with `open(..., newline="\n")`. No change for the push.
+
 ## 1.3.0
 - Chublets push: `--prune` (and `--prune-max`, default 50). Claims that the push wrote once and that the source no longer holds
   are removed with `wbremoveclaims` before new claims are written; dry run lists the calls. Claims without a GUID in the state
